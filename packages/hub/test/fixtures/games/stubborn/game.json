@@ -1,0 +1,7 @@
+{
+  "manifest": 1,
+  "id": "stubborn",
+  "name": "Fixture stubborn",
+  "start": ["node", "../../server.mjs", "stubborn"],
+  "startTimeoutMs": 1500
+}

@@ -1,0 +1,7 @@
+{
+  "manifest": 1,
+  "id": "exits-early",
+  "name": "Fixture exits-early",
+  "start": ["node", "../../server.mjs", "exits-early"],
+  "startTimeoutMs": 1500
+}

@@ -1,0 +1,7 @@
+{
+  "manifest": 1,
+  "id": "never-healthy",
+  "name": "Fixture never-healthy",
+  "start": ["node", "../../server.mjs", "never-healthy"],
+  "startTimeoutMs": 1500
+}

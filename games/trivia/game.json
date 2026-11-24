@@ -1,0 +1,10 @@
+{
+  "manifest": 1,
+  "id": "trivia",
+  "name": "Quick Trivia",
+  "blurb": "Eight questions. Right answers score, fast answers score more.",
+  "minPlayers": 1,
+  "maxPlayers": 16,
+  "start": ["node", "server.ts"],
+  "thumbnail": "public/thumb.svg"
+}

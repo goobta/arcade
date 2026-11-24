@@ -1,0 +1,9 @@
+{
+  "manifest": 1,
+  "id": "template",
+  "name": "Buzzer",
+  "blurb": "First to buzz wins the round.",
+  "minPlayers": 2,
+  "maxPlayers": 16,
+  "start": ["node", "server.ts"]
+}

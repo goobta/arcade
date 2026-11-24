@@ -1,0 +1,7 @@
+{
+  "manifest": 1,
+  "id": "crasher",
+  "name": "Fixture crasher",
+  "start": ["node", "../../server.mjs", "crasher"],
+  "startTimeoutMs": 1500
+}
