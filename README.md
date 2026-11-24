@@ -262,5 +262,7 @@ needs no volumes and no writable filesystem apart from `/tmp`, and should be
 run with an init process (`docker run --init`, or `init: true` in Compose) so
 stopped games are reaped.
 
-Measured with eight players in one game: about 30 MB for the idle hub and
-about 70 MB while a game is running.
+Measured over three twelve-player games: about 30 MB of private memory for
+the idle hub and about 70 MB in total while a game is running, back to the
+idle figure after each one closed. (`docker stats` reads higher, because it
+also counts the Node binary both processes share and the file cache.)

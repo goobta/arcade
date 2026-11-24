@@ -5,5 +5,6 @@
   "blurb": "First to buzz wins the round.",
   "minPlayers": 2,
   "maxPlayers": 16,
-  "start": ["node", "server.ts"]
+  "start": ["node", "server.ts"],
+  "thumbnail": "public/thumb.svg"
 }
