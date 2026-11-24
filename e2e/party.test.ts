@@ -234,3 +234,55 @@ test("a game nobody is playing is stopped after the idle timeout", { timeout: 60
   assert.deepEqual((await status(host.page, hub)).processes, []);
   assert.equal(alive(processes[0].pid), false);
 });
+
+test("a phone whose connections drop gets back into the game by itself", { timeout: 60_000 }, async (t) => {
+  const hub = await startHub();
+  t.after(() => stopHub(hub));
+  const host = await openHost(hub);
+  t.after(() => host.context.close());
+
+  const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+  t.after(() => context.close());
+  // Every websocket this phone opens goes through here, so the test can cut them.
+  const sockets: { url: string; cut: () => void }[] = [];
+  await context.routeWebSocket(/.*/, (ws) => {
+    const server = ws.connectToServer();
+    sockets.push({
+      url: ws.url(),
+      cut: () => {
+        void ws.close({ code: 1001 });
+        void server.close({ code: 1001 });
+      },
+    });
+  });
+  const phone = await context.newPage();
+  await phone.goto(`${hub.url}/${host.code}`);
+  await phone.locator("#name").fill("Ada");
+  await phone.locator("#join-button").click();
+  await phone.locator("#lobby").waitFor();
+
+  await host.page.locator('.card[data-game="trivia"]').click();
+  const stage = host.page.frameLocator("#stage iframe");
+  const game = phone.frameLocator("#frame iframe");
+  await stage.locator("#start:not([disabled])").click();
+  await game.locator(".pad button").first().waitFor();
+
+  // What a phone going to sleep looks like from the server: both sockets die.
+  const before = sockets.length;
+  assert.equal(before, 2, "one lobby socket and one game socket");
+  for (const socket of sockets) socket.cut();
+
+  // Both come back without the player doing anything...
+  for (let i = 0; i < 100 && sockets.length < before + 2; i++) await phone.waitForTimeout(100);
+  const reopened = sockets.slice(before).map((socket) => new URL(socket.url).pathname);
+  assert.ok(reopened.includes("/lobby"), "lobby reconnected");
+  assert.ok(reopened.some((path) => path.startsWith("/g/")), "game reconnected");
+  await phone.locator("#banner").waitFor({ state: "hidden" });
+  await game.locator("#status").waitFor({ state: "hidden" });
+
+  // ...and the answer they tap next still counts, in the same seat.
+  await game.locator('.pad button[data-choice="0"]').click();
+  await stage.locator(".choices .right").waitFor();
+  await game.locator("#result").waitFor();
+  assert.equal(await stage.locator(".board li").count(), 1);
+});
