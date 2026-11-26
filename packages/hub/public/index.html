@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#14152b" />
+    <title>Arcade</title>
+    <link rel="icon" href="/assets/favicon.svg" />
+    <link rel="stylesheet" href="/assets/arcade.css" />
+  </head>
+  <body class="phone">
+    <header id="bar" hidden>
+      <span class="code" id="bar-code"></span>
+      <span class="name" id="bar-name"></span>
+      <button class="quiet" id="leave" type="button">Leave</button>
+    </header>
+
+    <main id="join">
+      <h1 class="wordmark">Arcade</h1>
+      <form id="join-form" autocomplete="off">
+        <label>
+          Room code
+          <input id="code" name="code" maxlength="4" inputmode="text" autocapitalize="characters"
+                 autocorrect="off" spellcheck="false" placeholder="ABCD" required />
+        </label>
+        <label>
+          Your name
+          <input id="name" name="name" maxlength="16" autocapitalize="words" placeholder="Name" required />
+        </label>
+        <button id="join-button">Join</button>
+        <p class="error" id="join-error" role="alert"></p>
+      </form>
+    </main>
+
+    <main id="lobby" hidden>
+      <h2>You're in, <span id="me"></span>!</h2>
+      <p class="hint" id="lobby-hint">Watch the big screen. The host is picking a game.</p>
+      <ul class="chips" id="players"></ul>
+    </main>
+
+    <div id="frame" hidden></div>
+    <div id="banner" hidden role="status">Reconnecting…</div>
+
+    <script src="/assets/shell.js"></script>
+  </body>
+</html>

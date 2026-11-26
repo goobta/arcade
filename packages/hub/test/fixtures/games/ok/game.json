@@ -1,0 +1,7 @@
+{
+  "manifest": 1,
+  "id": "ok",
+  "name": "Fixture ok",
+  "start": ["node", "../../server.mjs", "ok"],
+  "startTimeoutMs": 1500
+}

@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#14152b" />
+    <title>Arcade · Host</title>
+    <link rel="icon" href="/assets/favicon.svg" />
+    <link rel="stylesheet" href="/assets/arcade.css" />
+  </head>
+  <body class="host">
+    <main id="gate" hidden>
+      <h1 class="wordmark">Arcade</h1>
+      <form id="pin-form">
+        <label>
+          Host PIN
+          <input id="pin" type="password" autocomplete="current-password" required />
+        </label>
+        <button>Open the arcade</button>
+        <p class="error" id="pin-error" role="alert"></p>
+      </form>
+    </main>
+
+    <main id="home" hidden>
+      <section class="joinbox">
+        <p class="where">Join on your phone at</p>
+        <p class="url" id="join-host"></p>
+        <p class="roomcode" id="room-code"></p>
+        <img id="qr" alt="QR code to join" />
+      </section>
+      <div class="side">
+        <section>
+          <h2>Players <small id="player-count"></small></h2>
+          <ul class="chips" id="players"></ul>
+        </section>
+        <section>
+          <h2>Pick a game</h2>
+          <div class="grid" id="games"></div>
+        </section>
+        <div class="actions">
+          <button class="quiet" id="fullscreen" type="button">Fullscreen</button>
+          <button class="danger" id="end" type="button">End party</button>
+        </div>
+      </div>
+    </main>
+
+    <div id="stage" hidden>
+      <div id="stagebar">
+        <span class="join">Join at <span id="bar-host"></span> · code <b id="bar-code"></b></span>
+        <span id="bar-game"></span>
+        <button class="quiet" id="stage-fullscreen" type="button">Fullscreen</button>
+        <button class="danger" id="close-game" type="button">Close game</button>
+      </div>
+      <div id="starting" hidden>
+        <p class="big">Starting <span id="starting-name"></span>…</p>
+      </div>
+    </div>
+
+    <div id="toast" hidden role="alert"></div>
+    <script src="/assets/host.js"></script>
+  </body>
+</html>
