@@ -8,7 +8,11 @@
   </head>
   <body class="host">
     <div id="status" hidden>Reconnecting…</div>
-    <div id="app"></div>
+    <!-- A fixed 1280×720 stage, scaled to fit whatever screen it is on. -->
+    <div id="stage">
+      <div id="app"></div>
+      <div id="fx" aria-hidden="true"></div>
+    </div>
     <script src="./_sdk/arcade.js"></script>
     <script src="./ui.js"></script>
     <script src="./host.js"></script>

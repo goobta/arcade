@@ -12,7 +12,7 @@
     "start": "node packages/hub/src/main.ts",
     "dev": "ARCADE_HOST_PIN=${ARCADE_HOST_PIN:-letmein} node --watch packages/hub/src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"packages/*/test/*.test.ts\"",
+    "test": "node --test \"packages/*/test/*.test.ts\" \"games/*/test/*.test.ts\"",
     "test:e2e": "node --test e2e/*.test.ts",
     "games": "node scripts/games.ts"
   },
