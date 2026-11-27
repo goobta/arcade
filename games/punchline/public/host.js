@@ -224,7 +224,7 @@ function settings(view, compact) {
     return entry.id === config.pack;
   })[0];
   var crewOptions = [];
-  for (var c = 2; c <= 8; c++) crewOptions.push({ value: c, text: c + " crews" });
+  for (var c = 2; c <= 6; c++) crewOptions.push({ value: c, text: c + " crews" });
   // Every pack, then the AI writer when the server has a key for it.
   var packOptions = view.packs.map(function (entry) {
     return { value: entry.id, text: entry.name + " (" + entry.count + ")", title: entry.description, change: { pack: entry.id, source: "pack" } };

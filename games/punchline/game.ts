@@ -1,7 +1,7 @@
 // Punchline: crews write the funniest answer to a prompt, everyone votes, and
 // the answer with the most votes scores for its crew.
 //
-// The host chooses how many crews there are (2 to 8), how many rounds to play,
+// The host chooses how many crews there are (2 to 6), how many rounds to play,
 // and where the prompts come from: a question pack (the JSON files in
 // ./questions: drop another one in and it shows up in the lobby the next time
 // the game is opened) or, when ANTHROPIC_API_KEY is set, prompts written for
@@ -74,7 +74,7 @@ function loadPacks(): Pack[] {
 // ---------- rules ----------
 
 /** Crew names, in the order crews are added. The clients pair each with a mascot and colour. */
-export const CREWS = ["Hot Sauce", "Blueberries", "Lemons", "Pickles", "Grapes", "Tangerines", "Mints", "Marshmallows"];
+export const CREWS = ["Hot Sauce", "Blueberries", "Lemons", "Pickles", "Grapes", "Tangerines"];
 export const MIN_CREWS = 2;
 export const MAX_CREWS = CREWS.length;
 const MAX_ROUNDS = 20;

@@ -353,10 +353,10 @@ test("three crews play Punchline: everyone writes, crews pick an answer, the roo
   assert.equal(await stage.locator('[data-set="pack=ai"]').count(), 0);
   await stage.locator('[data-menu="pack"]').click();
 
-  // Crews and rounds are the only game-shape settings. Up to eight crews; this show has three.
+  // Crews and rounds are the only game-shape settings. Up to six crews; this show has three.
   assert.equal(await stage.locator('[data-menu="answering"]').count(), 0);
   await stage.locator('[data-menu="teams"]').click();
-  assert.equal(await stage.locator('[data-set^="teams="]').count(), 7);
+  assert.equal(await stage.locator('[data-set^="teams="]').count(), 5);
   await stage.locator('[data-set="teams=3"]').click();
   await setOption(stage, "rounds", 3);
   await stage.locator('.team[data-team="2"]').filter({ hasText: "Lemons" }).waitFor();

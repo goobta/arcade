@@ -85,18 +85,20 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 beforeEach(() => mock.timers.enable({ apis: ["Date"], now: 1_000_000 }));
 afterEach(() => mock.timers.reset());
 
-test("up to eight crews, named, and no more", () => {
+test("up to six crews, named, and no more", () => {
   const p = party(2);
-  p.host("configure", { teams: 8 });
+  p.host("configure", { teams: 6 });
   assert.deepEqual(
     p.hostView().teams.map((team: any) => team.name),
     CREWS,
   );
-  assert.equal(CREWS.length, 8);
-  p.host("configure", { teams: 9 });
-  assert.equal(p.g.state.config.teams, 8);
-  p.play(0, "join", 7);
-  assert.equal(p.view(0).teamName, "Marshmallows");
+  assert.equal(CREWS.length, 6);
+  p.host("configure", { teams: 7 });
+  assert.equal(p.g.state.config.teams, 6);
+  p.play(0, "join", 6);
+  assert.equal(p.view(0).team, null);
+  p.play(0, "join", 5);
+  assert.equal(p.view(0).teamName, "Tangerines");
   // Dropping to fewer crews sends their members back to the picker.
   p.host("configure", { teams: 4 });
   assert.equal(p.view(0).team, null);
@@ -343,7 +345,7 @@ test("final vote with four crews: two votes each, on two different answers, and 
   p.play(3, "vote", slot(p, 2));
 
   assert.equal(p.g.state.phase, "result");
-  // Hot Sauce: p1, p2, p3. Lemons: p0, p1, p3. Marshmallows... Pickles: p0, p2. Blueberries: nobody.
+  // Hot Sauce: p1, p2, p3. Lemons: p0, p1, p3. Pickles: p0, p2. Blueberries: nobody.
   assert.deepEqual([...p.g.state.winners].sort(), [0, 2]);
   assert.deepEqual(p.g.state.scores, [1, 0, 1, 0]);
   const byCrew = Object.fromEntries(p.hostView().results.map((r: any) => [r.team, r.voters.length]));

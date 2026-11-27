@@ -6,13 +6,13 @@ whole room votes, and the answer with the most votes scores a point for its
 crew. Rimshot, a talking microphone, emcees.
 
 The crews are food mascots, told apart by shape as well as colour: Hot Sauce,
-Blueberries, Lemons, Pickles, Grapes, Tangerines, Mints and Marshmallows.
+Blueberries, Lemons, Pickles, Grapes and Tangerines.
 
 The host sets these in the lobby:
 
 | Setting | Choices | Default |
 |---|---|---|
-| Crews | 2 to 8 | 2 |
+| Crews | 2 to 6 | 2 |
 | Rounds | 3, 5, 8 or 10 | 5 |
 | Questions | every pack in `questions/`, or ✨ AI (see [AI prompts](#ai-prompts)) | first pack by file name |
 
