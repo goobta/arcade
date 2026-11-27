@@ -287,7 +287,13 @@ test("a phone whose connections drop gets back into the game by itself", { timeo
   assert.equal(await stage.locator(".board li").count(), 1);
 });
 
-test("three teams play Punchline: two answer, the third votes", { timeout: 120_000 }, async (t) => {
+/** Opens a lobby setting's menu on the projector and picks a value. */
+async function setOption(stage: ReturnType<Page["frameLocator"]>, key: string, value: string | number) {
+  await stage.locator(`[data-menu="${key}"]`).click();
+  await stage.locator(`[data-set="${key}=${value}"]`).click();
+}
+
+test("three crews play Punchline: two answer, the third votes and heckles", { timeout: 120_000 }, async (t) => {
   const hub = await startHub();
   t.after(() => stopHub(hub));
   const host = await openHost(hub);
@@ -311,64 +317,92 @@ test("three teams play Punchline: two answer, the third votes", { timeout: 120_0
   const stage = host.page.frameLocator("#stage iframe");
 
   // Both question packs in games/punchline/questions are offered.
+  await stage.locator('[data-menu="pack"]').click();
   await stage.locator('[data-set="pack=party"]').waitFor();
   await stage.locator('[data-set="pack=work"]').waitFor();
+  await stage.locator('[data-menu="pack"]').click();
 
-  // Three teams, three rounds; two teams answer each round (the default).
+  // Up to eight crews; this show has three, three rounds, two crews answering each (the default).
+  await stage.locator('[data-menu="teams"]').click();
+  assert.equal(await stage.locator('[data-set^="teams="]').count(), 7);
   await stage.locator('[data-set="teams=3"]').click();
-  await stage.locator('[data-set="rounds=3"]').click();
-  await stage.locator('.team[data-team="2"]').waitFor();
-  assert.equal(await stage.locator("#start").isDisabled(), true, "cannot start with empty teams");
+  await setOption(stage, "rounds", 3);
+  await stage.locator('.team[data-team="2"]').filter({ hasText: "Lemons" }).waitFor();
+  assert.equal(await stage.locator("#start").isDisabled(), true, "cannot start with empty crews");
 
-  // Ada: Red. Grace: Blue. Linus and Alan: Yellow. Alan changes his mind first.
-  await alan.game.locator('.picker button[data-team="0"]').click();
+  // Ada: Hot Sauce. Grace: Blueberries. Linus and Alan: Lemons. Alan changes his mind first.
+  await alan.game.locator('.crew[data-team="0"]').click();
   await stage.locator('.team[data-team="0"]').getByText("Alan").waitFor();
-  await ada.game.locator('.picker button[data-team="0"]').click();
-  await grace.game.locator('.picker button[data-team="1"]').click();
-  await linus.game.locator('.picker button[data-team="2"]').click();
-  await alan.game.locator('.picker button[data-team="2"]').click();
+  await ada.game.locator('.crew[data-team="0"]').click();
+  await grace.game.locator('.crew[data-team="1"]').click();
+  await linus.game.locator('.crew[data-team="2"]').click();
+  await alan.game.locator('.crew[data-team="2"]').click();
   await stage.locator('.team[data-team="2"]').getByText("Alan").waitFor();
+  await alan.game.locator(".crew.picked").filter({ hasText: "Lemons" }).waitFor();
   await stage.locator("#start:not([disabled])").click();
 
-  // Teams take turns: Red+Blue, then Red+Yellow, then Blue+Yellow.
+  // Crews take turns: Hot Sauce+Blueberries, then Hot Sauce+Lemons, then Blueberries+Lemons.
   const rounds = [
-    { writers: [ada, grace], voters: [linus, alan], winner: "Red" },
-    { writers: [ada, linus], voters: [grace], winner: "Yellow" },
-    { writers: [grace, alan], voters: [ada], winner: "Yellow" },
+    { writers: [ada, grace], voters: [linus, alan], winner: "Hot Sauce takes" },
+    { writers: [ada, linus], voters: [grace], winner: "Lemons take" },
+    { writers: [grace, alan], voters: [ada], winner: "Lemons take" },
   ];
   for (const [index, round] of rounds.entries()) {
-    await stage.getByText(`Round ${index + 1} of 3`).waitFor();
+    await stage.getByText(`ROUND ${index + 1} OF 3`).waitFor();
     for (const voter of round.voters) await voter.game.locator("#waiting").waitFor();
 
     const answers = round.writers.map((writer) => `${writer.name} says ${index}`);
     await round.writers[0].game.locator("#answer").fill(answers[0]);
+    // The projector shows who is typing, not what.
+    await stage.getByText(`${round.writers[0].name} is typing`).waitFor();
+    if (index === 0) {
+      // A judge heckles; it floats up the projector. A second tap straight away is ignored.
+      await linus.game.locator('[data-heckle="HA!"]').click();
+      await stage.locator("#fx .heckle").filter({ hasText: "Linus" }).waitFor();
+      await linus.game.locator('[data-heckle="BOO"]').click();
+      assert.equal(await stage.locator("#fx .heckle").filter({ hasText: "BOO" }).count(), 0);
+    }
     await round.writers[0].game.locator("#send").click();
-    // The projector says an answer is in, but not what it is.
     await stage.getByText("1 of 2 answers in").waitFor();
     assert.equal(await stage.getByText(answers[0]).count(), 0);
     await round.writers[1].game.locator("#answer").fill(answers[1]);
     await round.writers[1].game.locator("#send").click();
 
-    // Both answers are in: voting opens. The teams that wrote sit it out.
+    // Both answers are in: voting opens. The crews that wrote sit it out.
     await stage.locator(".answers li").nth(1).waitFor();
     for (const writer of round.writers) await writer.game.locator("#sitting-out").waitFor();
-    const winning = round.winner === "Yellow" ? answers[1] : answers[0];
+    const winning = round.winner.startsWith("Lemons") ? answers[1] : answers[0];
     for (const voter of round.voters) await voter.game.locator(".ballot button").filter({ hasText: winning }).click();
 
     // Everyone who can vote has: results show without waiting for the timer.
-    await stage.locator(".answers.revealed li.won").filter({ hasText: winning }).waitFor();
-    await stage.getByText(`${round.winner} takes the round`).waitFor();
+    await stage.locator(".results li.won").filter({ hasText: winning }).waitFor();
+    await stage.getByText(`${round.winner} the round!`).waitFor();
+    // The losing answer got no votes: crickets.
+    await stage.locator(".results li:not(.won) .crickets").waitFor();
     for (const phone of phones) await phone.game.locator("#result").waitFor();
     await stage.locator("#next").click();
   }
 
-  await stage.locator("#winner").filter({ hasText: "Yellow team wins!" }).waitFor();
-  await linus.game.locator("#place").filter({ hasText: "Your team won!" }).waitFor();
+  await stage.locator("#winner").filter({ hasText: "Lemons headline tonight!" }).waitFor();
+  await stage.locator(".award").filter({ hasText: "BIGGEST ZINGER" }).waitFor();
+  await stage.locator(".award").filter({ hasText: "THE CRICKETS AWARD" }).waitFor();
+  await linus.game.locator("#place").filter({ hasText: "Your crew headlined!" }).waitFor();
   await ada.game.locator("#place").filter({ hasText: "placed 2 of 3" }).waitFor();
   await grace.game.locator("#place").filter({ hasText: "placed 3 of 3" }).waitFor();
+
+  // New crews: back to the lobby, where Balance crews evens out a lopsided room.
+  await stage.getByText("New crews").click();
+  await stage.locator("#balance").waitFor();
+  await setOption(stage, "teams", 2);
+  // Lemons no longer exist, so Linus and Alan pick again; Balance places them.
+  await stage.locator("#unassigned").getByText("Linus").waitFor();
+  await stage.locator("#balance").click();
+  await stage.locator('.team[data-team="0"] .members li').nth(1).waitFor();
+  await stage.locator('.team[data-team="1"] .members li').nth(1).waitFor();
+  assert.equal(await stage.locator("#unassigned").count(), 0);
 });
 
-test("two teams that both answer vote on everything in Punchline", { timeout: 60_000 }, async (t) => {
+test("two crews that both answer vote on everything in Punchline", { timeout: 60_000 }, async (t) => {
   const hub = await startHub();
   t.after(() => stopHub(hub));
   const host = await openHost(hub);
@@ -389,26 +423,28 @@ test("two teams that both answer vote on everything in Punchline", { timeout: 60
 
   await host.page.locator('.card[data-game="punchline"]').click();
   const stage = host.page.frameLocator("#stage iframe");
-  await stage.locator('[data-set="rounds=3"]').click();
-  await ada.game.locator('.picker button[data-team="0"]').click();
-  await grace.game.locator('.picker button[data-team="1"]').click();
-  await linus.game.locator('.picker button[data-team="1"]').click();
+  await setOption(stage, "rounds", 3);
+  await ada.game.locator('.crew[data-team="0"]').click();
+  await grace.game.locator('.crew[data-team="1"]').click();
+  await linus.game.locator('.crew[data-team="1"]').click();
   await stage.locator("#start:not([disabled])").click();
 
-  // Typing survives the page being redrawn, and only one answer per team counts.
+  // Typing survives the page being redrawn, and only one answer per crew counts.
   await grace.game.locator("#answer").fill("Blue answer");
+  // Linus sees his teammate typing, and his own box is left alone.
+  await linus.game.locator(".presence").getByText("Grace is typing").waitFor();
   await ada.game.locator("#answer").fill("Red answer");
   await ada.game.locator("#send").click();
   await ada.game.locator("#sent").filter({ hasText: "Red answer" }).waitFor();
   assert.equal(await grace.game.locator("#answer").inputValue(), "Blue answer");
   await grace.game.locator("#send").click();
 
-  // No neutral team exists, so all three vote, each for the other team's answer.
+  // No neutral crew exists, so all three vote, each for the other crew's answer.
   await stage.getByText("0 of 3 votes in").waitFor();
   await ada.game.locator(".ballot button").filter({ hasText: "Blue answer" }).click();
   await grace.game.locator(".ballot button").filter({ hasText: "Red answer" }).click();
   await linus.game.locator(".ballot button").filter({ hasText: "Red answer" }).click();
-  await stage.getByText("Red takes the round").waitFor();
-  await ada.game.locator("#result").filter({ hasText: "Your team scores!" }).waitFor();
-  await grace.game.locator("#result").filter({ hasText: "Red scores" }).waitFor();
+  await stage.getByText("Hot Sauce takes the round!").waitFor();
+  await ada.game.locator("#result").filter({ hasText: "Your crew scored!" }).waitFor();
+  await grace.game.locator("#result").filter({ hasText: "Hot Sauce scores" }).waitFor();
 });
