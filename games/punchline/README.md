@@ -50,7 +50,7 @@ names.
   is the only one to publish scores unopposed.
 
 **Stragglers** who have not picked a crew when the show starts join the
-smallest crew. Latecomers pick a crew themselves and can write straight away.
+smallest crew (all but a [guest of honour](#guest-of-honour), who may watch). Latecomers pick a crew themselves and can write straight away.
 
 While the show runs:
 
@@ -101,6 +101,8 @@ opened; no code changes.
 - `name` (shown in the lobby) defaults to the file name; `description` is optional.
 - `theme` is optional and names a look for the whole show (see [Themed packs](#themed-packs)).
   An unknown theme is logged and ignored, and the pack plays on the usual stage.
+- `vip` is optional and gives the show a seat for a guest of honour (see
+  [Guest of honour](#guest-of-honour)).
 - A file that does not parse is skipped, and the reason is logged when the
   game starts. Other packs still load.
 - Prompts are drawn at random and are not repeated until the pack runs out,
@@ -133,6 +135,44 @@ Barfis, Faloodas, Jalebis), Rimshot ji in a turban, dancers in saris, tablas,
 marigold garlands, and "WAH WAH!" in place of "ZING!". Its type is Modak and
 Baloo 2, served from `public/fonts` like the others and fetched only when the
 look is on.
+
+## Guest of honour
+
+A pack can keep one seat for the person the party is for: a birthday, a
+leaving do, a holiday host. It is a rule of the pack, separate from its look,
+so a plain pack can have one and a themed pack need not.
+
+```json
+{ "name": "Raju's 60th", "theme": "raju60", "vip": { "title": "Birthday Boy", "votes": 3 }, "prompts": ["..."] }
+```
+
+`title` is what the seat is called (default "Guest of Honour") and `votes` is
+what each of their final-ballot votes is worth (1 to 9, default 3).
+`"vip": true` takes both defaults. Packs without `vip`, and ✨ AI shows, play
+exactly as before.
+
+- **Taking the seat.** While such a pack is chosen, every phone's crew picker
+  has an "I'm the Birthday Boy" card. There is one seat, first come first
+  served; once it is taken the other phones show who has it. The holder can
+  give it back in the lobby ("Not me"), and the host can empty it by clicking
+  the seat's pill on the projector. Once the show is running, only a latecomer
+  who has no crew yet can take it.
+- **Watch, or join a crew.** The guest of honour watches unless they pick a
+  crew, and can change their mind until the show starts. Watching, they write
+  nothing and nobody waits for them in the crew stage; they get the heckle
+  buttons from the first second. On a crew they play like anyone else, and
+  their vote among teammates is an ordinary one.
+- **The final vote.** They vote like everyone else (any answer they did not
+  write; two picks with four or more crews), and each pick counts for `votes`.
+  A round's "X of Y votes" then counts votes rather than judges.
+- **Always on show.** The projector lists them first among the judges, crowned,
+  whether or not they have voted yet, and first among an answer's voters at
+  the reveal, with a "×3".
+- **Left alone.** Shuffle crews and Balance crews never move them, and a
+  watching guest is not drafted onto a crew when the curtain goes up.
+
+A look can reword the seat's lines (`vipWatch`, `vipWelcome`, `vipWatching`,
+`vipOpen` in its `text`); the crown is the same in every look.
 
 ## AI prompts
 

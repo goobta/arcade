@@ -17,6 +17,8 @@ var heckleReadyAt = 0;
 // The write screen is kept on the page and patched while the player types,
 // so a teammate's "is typing…" never recreates the text box under their thumbs.
 var live = null; // { key, update(view) }
+// The guest of honour arriving mid-show is asked once whether to watch or join a crew.
+var vipSettled = false;
 
 function center() {
   return el.apply(null, ["div", { class: "center" }].concat([].slice.call(arguments)));
@@ -28,13 +30,21 @@ function topBar(view) {
       "div",
       { class: "top" },
       el("span", { class: "logo" }, say("title", "PUNCHLINE")),
-      el("span", { class: "me" }, "You're " + view.name),
+      view.vip && view.vip.mine && view.phase !== "lobby"
+        ? el("span", { class: "vip-chip", id: "vip-chip" }, art(VIP_CROWN), view.vip.title + " · ×" + view.vip.votes)
+        : el("span", { class: "me" }, "You're " + view.name),
     );
   }
   return el(
     "div",
     { class: "top" },
-    el("span", { class: "crew-chip " + crewClass(view.team), id: "team" }, mascot(view.team, 26, "rest"), view.teamName),
+    el(
+      "span",
+      { class: "crew-chip " + crewClass(view.team), id: "team" },
+      mascot(view.team, 26, "rest"),
+      view.teamName,
+      view.vip && view.vip.mine ? el("span", { class: "times", id: "vip-chip" }, "×" + view.vip.votes) : null,
+    ),
     el("span", { class: "round" }, "Round " + Math.min(view.round, view.total) + " of " + view.total),
     el("span", { class: "score" }, plural(view.score, "pt")),
   );
@@ -70,16 +80,106 @@ function membersText(team, view) {
 
 // ---------- lobby ----------
 
+/** The guest-of-honour seat on the picker: free to take, taken by someone else, or yours. */
+function vipSeat(view) {
+  var v = view.vip;
+  if (!v) return null;
+  var worth = "Votes count ×" + v.votes;
+  if (v.mine) {
+    return el(
+      "div",
+      { class: "vip-seat sticker mine", id: "vip-seat" },
+      art(VIP_CROWN),
+      el(
+        "span",
+        { class: "words" },
+        el("span", { class: "name" }, "You're the " + v.title + "!"),
+        el("span", { class: "who" }, worth + " in the final vote."),
+      ),
+      v.canLeave
+        ? el(
+            "button",
+            {
+              class: "leave",
+              id: "vip-leave",
+              type: "button",
+              onclick: function () {
+                game.send("vip", false);
+              },
+            },
+            "Not me",
+          )
+        : null,
+    );
+  }
+  if (v.takenBy) {
+    return el("p", { class: "vip-taken", id: "vip-seat" }, art(VIP_CROWN), el("span", {}, v.title + ": ", el("b", {}, v.takenBy)));
+  }
+  if (!v.canClaim) return null;
+  return el(
+    "button",
+    {
+      class: "vip-seat sticker",
+      id: "vip-seat",
+      type: "button",
+      onclick: function () {
+        vipSettled = false;
+        game.send("vip", true);
+      },
+    },
+    art(VIP_CROWN),
+    el(
+      "span",
+      { class: "words" },
+      el("span", { class: "name" }, "I'm the " + v.title),
+      el("span", { class: "who" }, worth + ". Watch, or join a crew."),
+    ),
+  );
+}
+
+/** For the guest of honour only: sit the writing out and just judge. */
+function watchCard(view, many) {
+  if (!view.vip || !view.vip.mine) return null;
+  var lobby = view.phase === "lobby";
+  var picked = lobby && view.watching;
+  return el(
+    "button",
+    {
+      class: "crew sticker watch" + (picked ? " picked" : ""),
+      id: "watch",
+      type: "button",
+      "aria-pressed": picked ? "true" : "false",
+      onclick: function () {
+        vipSettled = true;
+        if (lobby) game.send("watch");
+        else draw(lastView);
+      },
+    },
+    many ? null : art(VIP_CROWN),
+    el(
+      "span",
+      { class: "words" },
+      el("span", { class: "name" }, say("vipWatch", "Just watch")),
+      el("span", { class: "who" }, "No writing. You heckle, then judge."),
+    ),
+    picked ? el("span", { class: "tag" }, "BEST SEAT") : null,
+  );
+}
+
 function picker(view, heading) {
   var many = view.teams.length > 4;
+  var honoured = view.vip && view.vip.mine;
   var line =
     view.team === null
-      ? fill("Pick a crew, {name}. Snacks are judged harshly here.", { name: view.name })
+      ? honoured
+        ? fill(say("vipWelcome", "The best seat in the house, {name}. Watch from it, or pick a crew."), { name: view.name })
+        : fill("Pick a crew, {name}. Snacks are judged harshly here.", { name: view.name })
       : "Great pick, " + view.name + ". " + crewQuip(view.team);
   return el(
     "div",
     { class: "picker" },
     el("h1", {}, heading),
+    vipSeat(view),
     el(
       "div",
       { class: "crews" + (many ? " many" : "") },
@@ -105,6 +205,7 @@ function picker(view, heading) {
           mine ? el("span", { class: "tag" }, "YOU'RE IN") : null,
         );
       }),
+      watchCard(view, many),
     ),
     el(
       "p",
@@ -327,10 +428,27 @@ function huddle(view) {
   );
 }
 
+/** The crew stage for the guest of honour who is watching: the prompt, and the heckles from the first second. */
+function spectate(view) {
+  return el(
+    "div",
+    { class: "huddle spectate" },
+    stageBar(view),
+    promptCard(view),
+    el("h1", { id: "spectating" }, say("vipWatching", "The crews are writing")),
+    el(
+      "p",
+      { class: "muted", id: "huddle-hint" },
+      "Nothing for you to write. Each crew's best answer is coming, and your vote counts ×" + view.vip.votes + ".",
+    ),
+    el("div", { class: "while-waiting" }, el("span", { class: "kicker" }, "HECKLE WHILE YOU WAIT"), heckleButtons(view.spectate)),
+  );
+}
+
 /** The AI is writing the show's prompts. */
 function generating(view) {
   return center(
-    mascot(view.team, 110, "focus", "bob"),
+    view.team === null ? art(VIP_CROWN) : mascot(view.team, 110, "focus", "bob"),
     el("h1", { id: "generating" }, "Writing your prompts", dots()),
     el("p", { class: "muted" }, "Fresh material, made for this room. Eyes on the big screen."),
   );
@@ -341,8 +459,10 @@ function generating(view) {
 function vote(view) {
   var v = view.voting;
   var waiting;
+  var worth = view.voteWeight > 1 ? (v.limit > 1 ? " Each counts ×" : " It counts ×") + view.voteWeight + "." : "";
+  var stamp = view.voteWeight > 1 ? "YOUR VOTE ×" + view.voteWeight : "YOUR VOTE";
   if (!v.canVote) waiting = "Nothing for you to vote on this round.";
-  else if (v.left > 0) waiting = (v.limit > 1 ? "Votes left: " + v.left + ". Two different answers." : "Tap the one that got you.");
+  else if (v.left > 0) waiting = (v.limit > 1 ? "Votes left: " + v.left + ". Two different answers." : "Tap the one that got you.") + worth;
   else if (v.waiting === 0) waiting = "Votes are in!";
   else waiting = (v.limit > 1 ? "Votes are in!" : "Vote's in!") + " Tap again to change. Waiting on " + (v.waiting <= 2 ? list(v.waitingOn) : plural(v.waiting, "more judge")) + "…";
   return el(
@@ -381,7 +501,7 @@ function vote(view) {
             el("span", { class: "text" }, option.text),
             option.yours ? el("span", { class: "who" }, "Yours. No voting for yourself!") : option.own ? el("span", { class: "who" }, "Your crew's") : null,
           ),
-          option.picked ? el("span", { class: "stamp vote" + (once("vote" + view.round + "-" + option.index) ? " in" : "") }, "YOUR VOTE") : null,
+          option.picked ? el("span", { class: "stamp vote" + (once("vote" + view.round + "-" + option.index) ? " in" : "") }, stamp) : null,
         );
       }),
     ),
@@ -410,7 +530,11 @@ function result(view) {
         el(
           "span",
           { class: "sub" },
-          r.unopposed ? "Unopposed. A win's a win." : mine.votes + " of " + mine.eligible + " judges picked it",
+          r.unopposed
+            ? "Unopposed. A win's a win."
+            : view.vip
+              ? mine.votes + " of " + mine.eligible + " votes"
+              : mine.votes + " of " + mine.eligible + " judges picked it",
         ),
         r.won ? el("span", { class: "plus" }, "+1") : null,
       )
@@ -429,7 +553,9 @@ function result(view) {
       ? mascot(view.team, 110, "cheer", "hop")
       : cricket
         ? art(CRICKET_ART)
-        : mascot(view.team, 96, mine && r.winners.length ? "sulk" : "rest", "bob"),
+        : view.team === null
+          ? art(VIP_CROWN)
+          : mascot(view.team, 96, mine && r.winners.length ? "sulk" : "rest", "bob"),
     el("h1", { id: "result", class: r.won ? "good" : "" }, head),
     card,
     r.place ? el("p", { class: "hint" }, verb([view.teamName], "is", "are") + " in " + ordinal(r.place) + ". Eyes on the big screen.") : null,
@@ -460,7 +586,7 @@ function end(view) {
   if (a.heckler && a.heckler.name === view.name) mine.push(["LOUDEST HECKLER", plural(a.heckler.count, "heckle") + ". Legend."]);
   if (e.won && once("confetti-end")) confetti(fx, 20, 900);
   return center(
-    view.team === null ? null : mascot(view.team, 120, e.won ? "cheer" : e.place === view.teams.length ? "sulk" : "rest", e.won ? "hop" : "bob"),
+    view.team === null ? (view.watching ? art(VIP_CROWN) : null) : mascot(view.team, 120, e.won ? "cheer" : e.place === view.teams.length ? "sulk" : "rest", e.won ? "hop" : "bob"),
     el("span", { class: "kicker" }, "FINAL BOWS"),
     el("h1", { class: e.won ? "good" : "", id: "place" }, headline),
     view.team === null ? null : el("p", { class: "muted" }, plural(view.score, "point")),
@@ -480,16 +606,24 @@ function end(view) {
 
 function screen(view) {
   // Someone who arrives mid-game picks a crew before anything else.
-  if (view.phase === "lobby") return picker(view, view.team === null ? "Pick your crew" : "You're in!");
-  if (view.team === null) return picker(view, "Pick a crew to join in");
+  var honoured = view.vip && view.vip.mine;
+  if (view.phase === "lobby") {
+    return picker(view, view.team !== null ? "You're in!" : honoured ? "Watch, or pick a crew" : "Pick your crew");
+  }
+  if (view.team === null && honoured && !vipSettled) return picker(view, "Watch, or join a crew?");
+  if (view.team === null && !view.watching) return picker(view, "Pick a crew to join in");
   if (view.phase === "generating") return generating(view);
+  if (view.phase === "team" && view.spectate) return spectate(view);
   if (view.phase === "team") return view.huddle.writeOpen && !view.huddle.mine ? writeForm(view) : huddle(view);
   if (view.phase === "vote") return vote(view);
   if (view.phase === "result") return result(view);
   return end(view);
 }
 
-game.onView(function (view) {
+var lastView = null;
+
+function draw(view) {
+  lastView = view;
   setLook(view.theme);
   var h = view.huddle;
   var key = view.phase === "team" && h && h.writeOpen && !h.mine ? "write:" + view.round : null;
@@ -512,4 +646,6 @@ game.onView(function (view) {
     var box = document.getElementById("answer");
     if (box) box.focus();
   }
-});
+}
+
+game.onView(draw);

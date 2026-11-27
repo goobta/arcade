@@ -577,3 +577,71 @@ test("six crews in Punchline: six lanes, and shuffling fills them all", { timeou
   await stage.locator(".writer").nth(5).waitFor();
   assert.equal(await stage.locator(".writer").count(), 6);
 });
+
+test("Punchline's guest of honour: takes the seat, watches, and their vote counts three", { timeout: 60_000 }, async (t) => {
+  const hub = await startHub();
+  t.after(() => stopHub(hub));
+  const host = await openHost(hub);
+  t.after(() => host.context.close());
+
+  const phones = await joinPhones(t, hub, host.code, ["Raju", "Ada", "Grace", "Linus"]);
+  const [raju, ada, grace, linus] = phones;
+
+  await host.page.locator('.card[data-game="punchline"]').click();
+  const stage = host.page.frameLocator("#stage iframe");
+  // The usual packs have no seat; the Raju's 60th pack does.
+  await ada.game.locator('.crew[data-team="0"]').waitFor();
+  assert.equal(await ada.game.locator("#vip-seat").count(), 0);
+  await setOption(stage, "pack", "raju-60th");
+  await setOption(stage, "rounds", 3);
+  await stage.locator("#vip").filter({ hasText: "Birthday Boy: seat open" }).waitFor();
+
+  // One seat: Raju takes it, and it is gone from everyone else's phone.
+  await raju.game.locator("button#vip-seat").click();
+  await raju.game.getByText("You're the Birthday Boy!").waitFor();
+  await raju.game.locator('#watch[aria-pressed="true"]').waitFor();
+  await ada.game.locator("p#vip-seat").filter({ hasText: "Birthday Boy: Raju" }).waitFor();
+  assert.equal(await ada.game.locator("#watch").count(), 0);
+  await stage.locator("#vip").filter({ hasText: "Birthday Boy: Raju · watching · votes ×3" }).waitFor();
+
+  // He can sit on a crew instead, and go back to watching.
+  await raju.game.locator('.crew[data-team="1"]').click();
+  await stage.locator('.team[data-team="1"] li.vip').filter({ hasText: "Raju" }).waitFor();
+  await stage.locator("#vip").filter({ hasText: "Raju · Kulfis" }).waitFor();
+  await raju.game.locator("#watch").click();
+  await stage.locator("#vip").filter({ hasText: "Raju · watching" }).waitFor();
+
+  await ada.game.locator('.crew[data-team="0"]').click();
+  await grace.game.locator('.crew[data-team="0"]').click();
+  await linus.game.locator('.crew[data-team="1"]').click();
+  await stage.locator('.team[data-team="1"]').getByText("Linus").waitFor();
+  assert.equal(await stage.locator("#unassigned").count(), 0, "a watching guest is not still choosing");
+  await stage.locator("#start:not([disabled])").click();
+
+  // The crews write. Raju has nothing to write, and can heckle from the first second.
+  await raju.game.locator("#spectating").waitFor();
+  assert.equal(await raju.game.locator("#answer").count(), 0);
+  await raju.game.locator('[data-heckle="HA!"]').click();
+  await host.page.locator("#stage iframe").contentFrame().locator(".heckle").filter({ hasText: "Raju" }).waitFor();
+  await lock(ada, "Ada says");
+  await lock(grace, "Grace says");
+  await lock(linus, "Linus says");
+  await ada.game.locator(".mates .option").click();
+  await grace.game.locator(".mates .option").click();
+
+  // The final vote: Raju is first among the judges before he has voted, and his pick is worth three.
+  await stage.locator(".votes-in li.vip.waiting").filter({ hasText: "Raju" }).waitFor();
+  await raju.game.locator("#votes-left").filter({ hasText: "It counts ×3" }).waitFor();
+  await option(ada, "Linus says").click();
+  await option(grace, "Ada says").click();
+  await option(linus, "Ada says").click();
+  await stage.getByText("3 of 4 judges done").waitFor();
+  await option(raju, "Linus says").click();
+
+  // Two voters for Ada's, two for Linus's, but one of those is Raju: 2 against 4.
+  await stage.locator('.result[data-team="1"].won').getByText("4 votes").waitFor();
+  await stage.locator('.result[data-team="1"] .voters li.vip .times').filter({ hasText: "×3" }).waitFor();
+  await stage.locator('.result[data-team="0"]').getByText("2 votes").waitFor();
+  await raju.game.locator("#result").filter({ hasText: "Kulfis score" }).waitFor();
+  await linus.game.getByText("4 of 6 votes").waitFor();
+});

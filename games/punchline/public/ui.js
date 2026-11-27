@@ -201,14 +201,21 @@ function crewClass(team) {
   return team === null || team === undefined ? "" : "c" + team;
 }
 
-/** A round "avatar" with a player's initial, in their crew's colour. */
-function avatar(name, team, size) {
+/** A round "avatar" with a player's initial, in their crew's colour. The guest of honour's wears a crown. */
+function avatar(name, team, size, vip) {
   return el(
     "span",
-    { class: "avatar " + crewClass(team), style: size ? "--size:" + size + "px" : null, title: name },
+    { class: "avatar " + crewClass(team) + (vip ? " vip" : "") + (vip && (team === null || team === undefined) ? " guest" : ""), style: size ? "--size:" + size + "px" : null, title: name },
     (name || "?").trim().charAt(0).toUpperCase() || "?",
+    vip ? art(VIP_CROWN) : null,
   );
 }
+
+/** The guest of honour's crown: on their seat, their avatar and their chip. */
+var VIP_CROWN =
+  '<svg class="vip-crown" viewBox="0 0 60 38" aria-hidden="true">' +
+  '<path d="M5 33 L8 8 L20 20 L30 4 L40 20 L52 8 L55 33 Z" fill="#FFD23F" stroke="#1A1230" stroke-width="5" stroke-linejoin="round"/>' +
+  '<circle cx="30" cy="25" r="3.5" fill="#FF4F9A"/></svg>';
 
 // ---------- Rimshot, the emcee ----------
 
@@ -603,6 +610,10 @@ var LOOKS = {
       lobbyChoosing: "Pick your mithai! Anyone still dithering when we start joins the smallest crew.",
       lobbyReady: ["Crews are set. Chai is poured. Hit the big button when you're ready.", "Everyone's here. Raju Uncle, brace yourself."],
       pickHint: "Tap another sweet any time before the show starts.",
+      vipWatch: "Just watch, beta",
+      vipWelcome: "Happy birthday, {name}! Best chair in the tent. Watch from it, or pick a crew.",
+      vipWatching: "The crews are roasting you",
+      vipOpen: "The birthday chair is empty. Raju Uncle, phone out!",
     },
     quips: {
       write: [
