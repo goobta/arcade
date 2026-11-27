@@ -286,3 +286,129 @@ test("a phone whose connections drop gets back into the game by itself", { timeo
   await game.locator("#result").waitFor();
   assert.equal(await stage.locator(".board li").count(), 1);
 });
+
+test("three teams play Punchline: two answer, the third votes", { timeout: 120_000 }, async (t) => {
+  const hub = await startHub();
+  t.after(() => stopHub(hub));
+  const host = await openHost(hub);
+  t.after(() => host.context.close());
+
+  const names = ["Ada", "Grace", "Linus", "Alan"];
+  const phones = [];
+  for (const name of names) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    await page.goto(`${hub.url}/${host.code}`);
+    await page.locator("#name").fill(name);
+    await page.locator("#join-button").click();
+    await page.locator("#lobby").waitFor();
+    phones.push({ name, page, game: page.frameLocator("#frame iframe") });
+  }
+  const [ada, grace, linus, alan] = phones;
+
+  await host.page.locator('.card[data-game="punchline"]').click();
+  const stage = host.page.frameLocator("#stage iframe");
+
+  // Both question packs in games/punchline/questions are offered.
+  await stage.locator('[data-set="pack=party"]').waitFor();
+  await stage.locator('[data-set="pack=work"]').waitFor();
+
+  // Three teams, three rounds; two teams answer each round (the default).
+  await stage.locator('[data-set="teams=3"]').click();
+  await stage.locator('[data-set="rounds=3"]').click();
+  await stage.locator('.team[data-team="2"]').waitFor();
+  assert.equal(await stage.locator("#start").isDisabled(), true, "cannot start with empty teams");
+
+  // Ada: Red. Grace: Blue. Linus and Alan: Yellow. Alan changes his mind first.
+  await alan.game.locator('.picker button[data-team="0"]').click();
+  await stage.locator('.team[data-team="0"]').getByText("Alan").waitFor();
+  await ada.game.locator('.picker button[data-team="0"]').click();
+  await grace.game.locator('.picker button[data-team="1"]').click();
+  await linus.game.locator('.picker button[data-team="2"]').click();
+  await alan.game.locator('.picker button[data-team="2"]').click();
+  await stage.locator('.team[data-team="2"]').getByText("Alan").waitFor();
+  await stage.locator("#start:not([disabled])").click();
+
+  // Teams take turns: Red+Blue, then Red+Yellow, then Blue+Yellow.
+  const rounds = [
+    { writers: [ada, grace], voters: [linus, alan], winner: "Red" },
+    { writers: [ada, linus], voters: [grace], winner: "Yellow" },
+    { writers: [grace, alan], voters: [ada], winner: "Yellow" },
+  ];
+  for (const [index, round] of rounds.entries()) {
+    await stage.getByText(`Round ${index + 1} of 3`).waitFor();
+    for (const voter of round.voters) await voter.game.locator("#waiting").waitFor();
+
+    const answers = round.writers.map((writer) => `${writer.name} says ${index}`);
+    await round.writers[0].game.locator("#answer").fill(answers[0]);
+    await round.writers[0].game.locator("#send").click();
+    // The projector says an answer is in, but not what it is.
+    await stage.getByText("1 of 2 answers in").waitFor();
+    assert.equal(await stage.getByText(answers[0]).count(), 0);
+    await round.writers[1].game.locator("#answer").fill(answers[1]);
+    await round.writers[1].game.locator("#send").click();
+
+    // Both answers are in: voting opens. The teams that wrote sit it out.
+    await stage.locator(".answers li").nth(1).waitFor();
+    for (const writer of round.writers) await writer.game.locator("#sitting-out").waitFor();
+    const winning = round.winner === "Yellow" ? answers[1] : answers[0];
+    for (const voter of round.voters) await voter.game.locator(".ballot button").filter({ hasText: winning }).click();
+
+    // Everyone who can vote has: results show without waiting for the timer.
+    await stage.locator(".answers.revealed li.won").filter({ hasText: winning }).waitFor();
+    await stage.getByText(`${round.winner} takes the round`).waitFor();
+    for (const phone of phones) await phone.game.locator("#result").waitFor();
+    await stage.locator("#next").click();
+  }
+
+  await stage.locator("#winner").filter({ hasText: "Yellow team wins!" }).waitFor();
+  await linus.game.locator("#place").filter({ hasText: "Your team won!" }).waitFor();
+  await ada.game.locator("#place").filter({ hasText: "placed 2 of 3" }).waitFor();
+  await grace.game.locator("#place").filter({ hasText: "placed 3 of 3" }).waitFor();
+});
+
+test("two teams that both answer vote on everything in Punchline", { timeout: 60_000 }, async (t) => {
+  const hub = await startHub();
+  t.after(() => stopHub(hub));
+  const host = await openHost(hub);
+  t.after(() => host.context.close());
+
+  const phones = [];
+  for (const name of ["Ada", "Grace", "Linus"]) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    t.after(() => context.close());
+    const page = await context.newPage();
+    await page.goto(`${hub.url}/${host.code}`);
+    await page.locator("#name").fill(name);
+    await page.locator("#join-button").click();
+    await page.locator("#lobby").waitFor();
+    phones.push({ name, page, game: page.frameLocator("#frame iframe") });
+  }
+  const [ada, grace, linus] = phones;
+
+  await host.page.locator('.card[data-game="punchline"]').click();
+  const stage = host.page.frameLocator("#stage iframe");
+  await stage.locator('[data-set="rounds=3"]').click();
+  await ada.game.locator('.picker button[data-team="0"]').click();
+  await grace.game.locator('.picker button[data-team="1"]').click();
+  await linus.game.locator('.picker button[data-team="1"]').click();
+  await stage.locator("#start:not([disabled])").click();
+
+  // Typing survives the page being redrawn, and only one answer per team counts.
+  await grace.game.locator("#answer").fill("Blue answer");
+  await ada.game.locator("#answer").fill("Red answer");
+  await ada.game.locator("#send").click();
+  await ada.game.locator("#sent").filter({ hasText: "Red answer" }).waitFor();
+  assert.equal(await grace.game.locator("#answer").inputValue(), "Blue answer");
+  await grace.game.locator("#send").click();
+
+  // No neutral team exists, so all three vote, each for the other team's answer.
+  await stage.getByText("0 of 3 votes in").waitFor();
+  await ada.game.locator(".ballot button").filter({ hasText: "Blue answer" }).click();
+  await grace.game.locator(".ballot button").filter({ hasText: "Red answer" }).click();
+  await linus.game.locator(".ballot button").filter({ hasText: "Red answer" }).click();
+  await stage.getByText("Red takes the round").waitFor();
+  await ada.game.locator("#result").filter({ hasText: "Your team scores!" }).waitFor();
+  await grace.game.locator("#result").filter({ hasText: "Red scores" }).waitFor();
+});

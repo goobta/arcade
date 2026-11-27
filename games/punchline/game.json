@@ -1,0 +1,10 @@
+{
+  "manifest": 1,
+  "id": "punchline",
+  "name": "Punchline",
+  "blurb": "Teams write the funniest answer to a prompt. Everyone votes, best answer scores.",
+  "minPlayers": 2,
+  "maxPlayers": 16,
+  "start": ["node", "server.ts"],
+  "thumbnail": "public/thumb.svg"
+}
