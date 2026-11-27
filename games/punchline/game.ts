@@ -150,8 +150,6 @@ export const AI_LEVELS = ["Unc", "Clean", "Cheeky", "Spicy", "NSFW"];
 export const MAX_THEME = 200;
 /** How many already-played prompts the AI is told to steer clear of. */
 const AVOID_MAX = 60;
-/** How many of a pack's own prompts the AI is shown when it adds to that pack. */
-const EXAMPLES_MAX = 80;
 
 /**
  * How many of a show's rounds the AI writes when it enhances a pack: `mix`
@@ -170,8 +168,12 @@ export interface PromptRequest {
   count: number;
   /** Prompts already played, not to be repeated. */
   avoid: string[];
-  /** Set when the prompts are joining a pack's own: write more like these, and none of these. */
-  pack?: { name: string; description: string; examples: string[] };
+  /**
+   * Set when the prompts are joining a pack's own, to extend its theme.
+   * `examples` is every prompt in the pack; `picked` is those of them playing
+   * in this show beside the new ones.
+   */
+  pack?: { name: string; description: string; examples: string[]; picked: string[] };
 }
 
 export interface Options {
@@ -641,7 +643,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
     // A pack too small for its share leaves the AI the rest.
     const count = rounds - real.length;
     const request: PromptRequest = { theme: pack ? "" : aiTheme, level: aiLevel, count, avoid: g.state.used.slice(-AVOID_MAX) };
-    if (pack) request.pack = { name: pack.name, description: pack.description, examples: pack.prompts.slice(0, EXAMPLES_MAX) };
+    if (pack) request.pack = { name: pack.name, description: pack.description, examples: pack.prompts, picked: real };
     g.state.phase = "generating";
     const current = () => g.state.generation === id && g.state.phase === "generating";
     Promise.resolve()

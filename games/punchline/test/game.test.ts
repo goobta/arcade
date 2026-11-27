@@ -711,8 +711,10 @@ test("AI enhance: a share of a pack's rounds is written by the AI in the pack's 
   assert.equal(requests[0].level, 2);
   assert.equal(requests[0].theme, "", "the pack is the theme");
   assert.equal(requests[0].pack?.name, "Raju's 60th");
+  // The writer sees the whole pack, and which of it is playing tonight.
   assert.deepEqual(requests[0].pack?.examples, PACKS[1].prompts);
   const show = p.g.state.prompts;
+  assert.deepEqual([...(requests[0].pack?.picked ?? [])].sort(), show.filter((prompt) => /^Roast \d+$/.test(prompt)).sort());
   assert.equal(show.length, 5);
   assert.equal(show.filter((prompt) => /^New roast 1\.[12]$/.test(prompt)).length, 2);
   assert.equal(show.filter((prompt) => /^Roast \d+$/.test(prompt)).length, 3);
@@ -733,6 +735,8 @@ test("AI enhance: a share of a pack's rounds is written by the AI in the pack's 
   p.host("start");
   await settle();
   assert.equal(requests[2].count, 5);
+  assert.deepEqual(requests[2].pack?.picked, []);
+  assert.equal(requests[2].pack?.examples.length, 20);
   assert.ok(p.g.state.prompts.every((prompt) => /^New roast 3\./.test(prompt)));
   assert.equal(p.hostView().theme, "raju60");
   for (let i = 0; i < 10; i++) p.host("next");

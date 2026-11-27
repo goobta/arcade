@@ -213,9 +213,11 @@ pill sits next to the chosen pack in the lobby, and opens two sliders:
   the pack's own. At 100% every prompt is new.
 - **Spice** is the same slider as above, and applies to what the AI writes.
 
-The AI is shown the pack's name, description and prompts (the first 80) and
-asked for more of the same, so new prompts keep to the pack's subject, voice
-and running jokes; anything that repeats one of the pack's own is thrown away.
+The AI is shown the whole pack (its name, description and every prompt) and
+which of those prompts are playing tonight, and is asked to extend the pack's
+theme: new situations and angles in the same world, with the same recurring
+people and voice, rather than rewordings or general party prompts. Anything
+that repeats one of the pack's own is thrown away.
 The two kinds are shuffled together and nothing on screen says which is which.
 It is still the pack's show: its look and its guest-of-honour seat stay. The
 wait, the failure message and **Encore** work as they do for a full AI show.

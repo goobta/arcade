@@ -66,16 +66,33 @@ export interface GeneratorOptions {
 /** A failure worth showing the host as it is. */
 export class PromptError extends Error {}
 
-/** The pack the new prompts are joining: what it is about and how its own prompts read. */
+/**
+ * The pack the new prompts extend: all of it, so the model can work out the
+ * theme for itself, and which of its prompts are in tonight's show.
+ */
 function packBrief(pack: NonNullable<PromptRequest["pack"]>): string {
-  return [
-    "These prompts are joining an existing question pack, and will be shuffled in among its own for tonight's show. Write more of the same: the pack's subject, its voice, the shapes of its prompts, and the people, places and running jokes it keeps coming back to. A player should not be able to tell which prompts are new. Do not repeat or lightly reword any of the pack's own.",
-    `<pack name=${JSON.stringify(pack.name)}>`,
-    ...(pack.description.trim() ? [pack.description.trim()] : []),
-    ...pack.examples.map((prompt) => `- ${prompt}`),
-    "</pack>",
-    "The spice level above still applies to what you write, even where the pack's own prompts are tamer or wilder.",
-  ].join("\n");
+  const parts = [
+    [
+      "You are extending an existing question pack. Its author wrote every prompt below, and that is the whole pack. Your prompts will be shuffled in among some of them for tonight's show.",
+      "First work out the pack's theme from the prompts themselves: what it is about, the people, places and running jokes it keeps coming back to, its voice, and the shapes its prompts take.",
+      "Then extend that theme. Take it somewhere the pack has not been yet: new situations, new angles, and other corners of the same world, with the same recurring people and the same voice. Each of your prompts should read like the one the author would have written next, so that a player cannot tell which are new. Do not drift to a general party prompt that could sit in any pack, and do not repeat or lightly reword a prompt the pack already has.",
+    ].join(" "),
+    [
+      `<pack name=${JSON.stringify(pack.name)}>`,
+      ...(pack.description.trim() ? [pack.description.trim()] : []),
+      ...pack.examples.map((prompt) => `- ${prompt}`),
+      "</pack>",
+    ].join("\n"),
+  ];
+  if (pack.picked.length > 0) {
+    parts.push(
+      `Tonight's show plays these of the pack's own prompts beside yours. Cover different ground from them in particular, so the evening does not circle one joke:\n<playing_tonight>\n${pack.picked
+        .map((prompt) => `- ${prompt}`)
+        .join("\n")}\n</playing_tonight>`,
+    );
+  }
+  parts.push("The spice level above still applies to what you write, even where the pack's own prompts are tamer or wilder.");
+  return parts.join("\n\n");
 }
 
 function userMessage({ theme, level, count, avoid, pack }: PromptRequest): string {
