@@ -1,0 +1,26 @@
+{
+  "name": "Office Hours",
+  "description": "Work-safe prompts for team offsites.",
+  "prompts": [
+    "The worst thing to say when you unmute by accident",
+    "A meeting that definitely should have been an email",
+    "The least inspiring company value",
+    "An honest out-of-office message",
+    "The worst team-building activity",
+    "What the office printer is really thinking",
+    "A terrible name for a startup",
+    "The real meaning of \"let's circle back\"",
+    "A bad thing to write on a farewell card",
+    "The worst perk a company could offer",
+    "A job title that sounds important but isn't",
+    "What's actually in the mystery container in the office fridge",
+    "The worst possible subject line for an all-staff email",
+    "An honest answer to \"where do you see yourself in five years?\"",
+    "A sign the offsite is going badly",
+    "The least useful thing to put on a resume",
+    "A terrible theme for casual Friday",
+    "What the intern is secretly in charge of",
+    "The worst thing to hear at the start of a performance review",
+    "A new button every keyboard needs"
+  ]
+}
