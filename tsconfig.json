@@ -12,5 +12,5 @@
     "verbatimModuleSyntax": true,
     "types": ["node"]
   },
-  "include": ["packages/*/src", "packages/*/test", "games/*/*.ts", "templates/*/*.ts", "e2e", "scripts"]
+  "include": ["packages/*/src", "packages/*/test", "games/*/*.ts", "games/*/test", "templates/*/*.ts", "e2e", "scripts"]
 }

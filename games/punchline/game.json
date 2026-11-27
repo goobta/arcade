@@ -1,0 +1,10 @@
+{
+  "manifest": 1,
+  "id": "punchline",
+  "name": "Punchline",
+  "blurb": "Open mic night: crews write the funniest answer to a prompt, everyone votes, best answer scores.",
+  "minPlayers": 2,
+  "maxPlayers": 100,
+  "start": ["node", "server.ts"],
+  "thumbnail": "public/thumb.svg"
+}
