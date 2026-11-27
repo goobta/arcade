@@ -363,18 +363,19 @@ function settings(view, compact) {
   );
 }
 
-function roomCode(view, withQr) {
+/** The room code and a QR code that joins it. `compact` is the small one in the big-room lobby's top bar. */
+function roomCode(view, compact) {
   return el(
     "div",
-    { class: "room-code sticker" + (withQr ? " with-qr" : "") },
+    { class: "room-code sticker" + (compact ? " with-qr" : "") },
     el(
       "div",
       { class: "words" },
       el("span", { class: "label" }, "ROOM CODE"),
       el("span", { class: "code" }, view.code),
-      el("span", { class: "join" }, (withQr ? "" : "Late? Join at ") + view.join),
+      el("span", { class: "join" }, (compact ? "" : "Late? Join at ") + view.join),
     ),
-    withQr ? el("img", { class: "qr", src: "/api/qr.svg?code=" + encodeURIComponent(view.code), alt: "QR code to join" }) : null,
+    el("img", { class: "qr", src: "/api/qr.svg?code=" + encodeURIComponent(view.code), alt: "QR code to join" }),
   );
 }
 
