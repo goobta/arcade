@@ -94,8 +94,15 @@ export class Runner extends EventEmitter {
     const heap = game.maxHeapMb ?? this.#options.heapMb;
 
     // Built from scratch rather than copied from the hub: the host PIN and
-    // anything else in the hub's environment must not reach game code.
+    // anything else in the hub's environment must not reach game code. The one
+    // exception is what the game's manifest asks for by name ("env"), which the
+    // catalog has already checked cannot be an ARCADE_ variable or one set below.
+    const requested: NodeJS.ProcessEnv = {};
+    for (const name of game.env) {
+      if (process.env[name] !== undefined) requested[name] = process.env[name];
+    }
     const env: NodeJS.ProcessEnv = {
+      ...requested,
       PATH: process.env.PATH,
       HOME: "/tmp",
       TZ: process.env.TZ,

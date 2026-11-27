@@ -1,9 +1,20 @@
-// Drives Punchline's rules directly, with a stand-in for the SDK's `g`, so
-// crews, heckles, typing, balancing and awards are checked without a browser.
+// Drives Punchline's rules directly, with a stand-in for the SDK's `g`, so the
+// crew stage, the final vote, heckles, balancing, awards and the AI prompt
+// flow are checked without a browser.
 import assert from "node:assert/strict";
 import { afterEach, beforeEach, mock, test } from "node:test";
 import type { Game, Player } from "@arcade/sdk";
-import { CREWS, HECKLES_PER_SECOND, createDefinition, type Pack, type State } from "../game.ts";
+import {
+  CREWS,
+  HECKLES_PER_SECOND,
+  TEAM_MS,
+  WRITE_MS,
+  createDefinition,
+  type Options,
+  type Pack,
+  type PromptRequest,
+  type State,
+} from "../game.ts";
 
 const PACKS: Pack[] = [
   { id: "test", name: "Test", description: "", prompts: Array.from({ length: 20 }, (_, i) => `Prompt ${i + 1}`) },
@@ -13,11 +24,12 @@ interface Seat extends Player {
   connected: boolean;
 }
 
-function party(count: number) {
-  const def = createDefinition(PACKS);
+function party(count: number, options: Options = {}) {
+  const def = createDefinition(PACKS, { aiAvailable: false, ...options });
   const players: Seat[] = Array.from({ length: count }, (_, i) => ({ id: `p${i}`, name: `Player ${i}`, connected: true }));
   const timers = new Map<string, { at: number; fn: () => void }>();
   const sent: { to: unknown; type: string; data: any }[] = [];
+  let syncs = 0;
   const g: Game<State> = {
     state: def.init({ code: "FROG", maxPlayers: 100 }),
     code: "FROG",
@@ -28,46 +40,65 @@ function party(count: number) {
     deadline: (name) => timers.get(name)?.at,
     send: (to, type, data) => void sent.push({ to, type, data }),
     broadcast: () => {},
-    sync: () => {},
+    sync: () => void syncs++,
     end: () => {},
   };
   return {
     g,
     players,
     sent,
+    syncs: () => syncs,
     host: (type: string, data?: unknown) => def.onHost![type](g, data),
     play: (who: number, type: string, data?: unknown) => def.onPlayer![type](g, players[who], data),
     leave: (who: number) => {
       players[who].connected = false;
       def.onLeave!(g, players[who]);
     },
+    /** Runs a timer as if its time had come. */
+    fire: (name: string) => {
+      const timer = timers.get(name);
+      assert.ok(timer, `no "${name}" timer is running`);
+      timers.delete(name);
+      timer.fn();
+    },
+    timers: () => [...timers.keys()].sort(),
     hostView: () => def.hostView(g) as any,
     view: (who: number) => def.playerView(g, players[who]) as any,
   };
 }
 
-/** Players 0..n-1 join crews round-robin. */
-function seat(p: ReturnType<typeof party>, crews: number[]) {
+type Party = ReturnType<typeof party>;
+
+/** Players 0..n-1 join the crews listed. */
+function seat(p: Party, crews: number[]) {
   crews.forEach((crew, who) => p.play(who, "join", crew));
 }
 
-const sizes = (p: ReturnType<typeof party>) => p.hostView().teams.map((team: any) => team.members.length);
+/** Where a crew's answer sits on the shuffled ballot. */
+const slot = (p: Party, crew: number) => p.g.state.ballot.indexOf(crew);
+
+const sizes = (p: Party) => p.hostView().teams.map((team: any) => team.members.length);
+
+/** Lets promise callbacks (the AI answer arriving) run. */
+const settle = () => new Promise((resolve) => setImmediate(resolve));
 
 beforeEach(() => mock.timers.enable({ apis: ["Date"], now: 1_000_000 }));
 afterEach(() => mock.timers.reset());
 
-test("up to eight crews, named, and no more", () => {
+test("up to six crews, named, and no more", () => {
   const p = party(2);
-  p.host("configure", { teams: 8 });
+  p.host("configure", { teams: 6 });
   assert.deepEqual(
     p.hostView().teams.map((team: any) => team.name),
     CREWS,
   );
-  assert.equal(CREWS.length, 8);
-  p.host("configure", { teams: 9 });
-  assert.equal(p.g.state.config.teams, 8);
-  p.play(0, "join", 7);
-  assert.equal(p.view(0).teamName, "Marshmallows");
+  assert.equal(CREWS.length, 6);
+  p.host("configure", { teams: 7 });
+  assert.equal(p.g.state.config.teams, 6);
+  p.play(0, "join", 6);
+  assert.equal(p.view(0).team, null);
+  p.play(0, "join", 5);
+  assert.equal(p.view(0).teamName, "Tangerines");
   // Dropping to fewer crews sends their members back to the picker.
   p.host("configure", { teams: 4 });
   assert.equal(p.view(0).team, null);
@@ -102,25 +133,270 @@ test("stragglers join the smallest crew when the curtain goes up", () => {
   const p = party(5);
   seat(p, [0, 0, 1]);
   p.host("start");
-  assert.equal(p.g.state.phase, "write");
+  assert.equal(p.g.state.phase, "team");
   // Blueberries had one, so the first straggler evens it up and the second goes to Hot Sauce.
   assert.equal(p.g.state.teamOf.p3, 1);
   assert.equal(p.g.state.teamOf.p4, 0);
 });
 
-test("heckles come only from crews not writing, and are rate limited", () => {
+test("crew stage: everyone writes, locked answers show to teammates only, and nobody backs their own", () => {
+  const p = party(5);
+  p.host("configure", { teams: 3 });
+  seat(p, [0, 0, 0, 1, 2]);
+  p.host("start");
+  assert.deepEqual(p.timers(), ["team", "write"]);
+  assert.equal(p.view(0).duration, TEAM_MS);
+  assert.equal(p.view(0).deadline - p.view(0).writeDeadline, TEAM_MS - WRITE_MS);
+  // Every crew writes every round: nobody sits out.
+  for (const who of [0, 3, 4]) assert.equal(p.view(who).huddle.writeOpen, true);
+
+  p.play(0, "answer", "  Gym   Sock Sorbet ");
+  p.play(0, "answer", "A second thought");
+  assert.equal(p.view(0).huddle.mine, "Gym Sock Sorbet", "one answer each, tidied, no take-backs");
+
+  // A teammate sees it the moment it is locked; other crews and the projector never do.
+  assert.deepEqual(p.view(1).huddle.answers, [
+    { id: "p0", text: "Gym Sock Sorbet", byName: "Player 0", votes: 0, mine: false, picked: false },
+  ]);
+  assert.deepEqual(p.view(3).huddle.answers, []);
+  assert.equal(JSON.stringify(p.view(3)).includes("Gym Sock"), false);
+  assert.equal(JSON.stringify(p.hostView()).includes("Gym Sock"), false);
+  assert.deepEqual([p.hostView().teams[0].locked, p.hostView().teams[0].writers], [1, 3]);
+  assert.equal(p.hostView().lockedIn, 1);
+
+  // Voting opens for you once your own answer is locked.
+  assert.equal(p.view(1).huddle.canVote, false);
+  p.play(1, "teamVote", "p0");
+  assert.deepEqual(p.g.state.teamVotes, {});
+  p.play(1, "answer", "Nana's Couch Cushion");
+  assert.equal(p.view(1).huddle.canVote, true);
+
+  // Never your own, never another crew's, never someone who has not locked.
+  p.play(0, "teamVote", "p0");
+  p.play(0, "teamVote", "p3");
+  p.play(0, "teamVote", "p2");
+  assert.deepEqual(p.g.state.teamVotes, {});
+
+  p.play(0, "teamVote", "p1");
+  p.play(2, "answer", "Regret");
+  // A vote can be changed until the clock runs out.
+  p.play(2, "teamVote", "p0");
+  assert.equal(p.view(2).huddle.myVote, "p0");
+  p.play(2, "teamVote", "p1");
+  assert.deepEqual(p.g.state.teamVotes, { p0: "p1", p2: "p1" });
+  assert.deepEqual(
+    p.view(0).huddle.answers.map((a: any) => [a.byName, a.votes, a.mine, a.picked]),
+    [
+      ["Player 0", 0, true, false],
+      ["Player 1", 2, false, true],
+      ["Player 2", 0, false, false],
+    ],
+  );
+  assert.equal(p.hostView().teams[0].teamVotes, 2);
+  assert.equal(p.hostView().teams[0].submitted, true);
+
+  // The solo crews have nobody to back. Once the last vote is in, the stage ends early.
+  p.play(3, "answer", "Solo one");
+  p.play(4, "answer", "Solo two");
+  assert.equal(p.g.state.phase, "team", "still waiting on Player 1's vote");
+  p.play(1, "teamVote", "p2");
+  assert.equal(p.g.state.phase, "vote");
+  assert.deepEqual(p.timers(), ["vote"]);
+  assert.deepEqual(p.g.state.answers[0], { text: "Nana's Couch Cushion", by: "Player 1", byId: "p1" });
+  assert.equal(p.g.state.answers[1].text, "Solo one");
+});
+
+test("crew stage: the last five seconds are voting only, ties go to the first lock, and a silent crew sits out", () => {
+  const p = party(4);
+  seat(p, [0, 0, 0, 1]);
+  p.host("start");
+  p.play(1, "answer", "Second in, by name; first in, by clock");
+  p.play(0, "answer", "Locked later");
+
+  p.fire("write");
+  assert.equal(p.view(2).huddle.writeOpen, false);
+  p.play(2, "answer", "Too late");
+  assert.equal(p.view(2).huddle.mine, null);
+  // Out of time to write, but still in time to vote.
+  assert.equal(p.view(2).huddle.canVote, true);
+  p.play(0, "teamVote", "p1");
+  p.play(1, "teamVote", "p0");
+  assert.equal(p.g.state.phase, "team", "Player 2 has not voted, so the clock keeps running");
+
+  p.fire("team");
+  // One vote each: the answer locked first goes up. Blueberries locked nothing,
+  // so Hot Sauce is alone on the ballot and scores unopposed.
+  assert.equal(p.g.state.answers[0].byId, "p1");
+  assert.equal(1 in p.g.state.answers, false);
+  assert.equal(p.g.state.phase, "result");
+  assert.equal(p.hostView().unopposed, true);
+  assert.deepEqual(p.g.state.scores, [1, 0]);
+  assert.deepEqual(
+    p.hostView().results.map((r: any) => [r.name, r.text === null, r.won]),
+    [
+      ["Hot Sauce", false, true],
+      ["Blueberries", true, false],
+    ],
+  );
+});
+
+test("crew stage: a phone going home does not hold the room up", () => {
+  const p = party(3);
+  seat(p, [0, 0, 1]);
+  p.host("start");
+  p.play(0, "answer", "Here");
+  p.play(2, "answer", "Also here");
+  assert.equal(p.g.state.phase, "team");
+  p.leave(1);
+  assert.equal(p.g.state.phase, "vote");
+});
+
+test("final vote with three crews: one vote, any answer but the one you wrote, changeable until all are in", () => {
+  const p = party(5);
+  p.host("configure", { teams: 3 });
+  seat(p, [0, 0, 1, 1, 2]);
+  p.host("start");
+  p.play(0, "answer", "Zero");
+  p.play(1, "answer", "One");
+  p.play(2, "answer", "Two");
+  p.play(3, "answer", "Three");
+  p.play(4, "answer", "Four");
+  p.play(0, "teamVote", "p1");
+  p.play(1, "teamVote", "p0");
+  p.play(2, "teamVote", "p3");
+  p.play(3, "teamVote", "p2");
+  assert.equal(p.g.state.phase, "vote");
+  // Tied crew votes: the earlier lock was published.
+  assert.deepEqual([p.g.state.answers[0].byId, p.g.state.answers[1].byId, p.g.state.answers[2].byId], ["p0", "p2", "p4"]);
+  // Every crew's answer is up, and the ballot says nothing about who wrote what.
+  assert.deepEqual([...p.hostView().ballot].sort(), ["Four", "Two", "Zero"]);
+  assert.equal(p.hostView().votesEach, 1);
+  assert.equal(p.hostView().voters, 5);
+
+  const mine = (who: number, crew: number) => p.view(who).voting.options[slot(p, crew)];
+  assert.deepEqual([mine(0, 0).yours, mine(0, 0).allowed, mine(0, 0).own], [true, false, true]);
+  // A teammate's answer is your crew's, but you did not write it: fair game.
+  assert.deepEqual([mine(1, 0).yours, mine(1, 0).allowed, mine(1, 0).own], [false, true, true]);
+  assert.equal(p.view(0).voting.limit, 1);
+
+  p.play(0, "vote", slot(p, 0));
+  assert.deepEqual(p.g.state.votes, {}, "no voting for your own answer");
+
+  p.play(1, "vote", slot(p, 0));
+  assert.deepEqual(p.g.state.votes, { p1: [0] });
+  assert.equal(p.view(1).voting.left, 0);
+  // Tapping your pick takes it back; tapping another one moves the vote.
+  p.play(1, "vote", slot(p, 0));
+  assert.deepEqual(p.g.state.votes, {});
+  p.play(1, "vote", slot(p, 0));
+  p.play(1, "vote", slot(p, 2));
+  assert.deepEqual(p.g.state.votes, { p1: [2] });
+  assert.equal(mine(1, 2).picked, true);
+  assert.equal(p.hostView().votesIn, 1);
+
+  p.play(0, "vote", slot(p, 1));
+  p.play(2, "vote", slot(p, 0));
+  p.play(3, "vote", slot(p, 0));
+  assert.equal(p.g.state.phase, "vote");
+  p.play(4, "vote", slot(p, 1));
+  // Everyone has used their vote: tallied without waiting for the clock. A tie scores for both.
+  assert.equal(p.g.state.phase, "result");
+  assert.deepEqual([...p.g.state.winners].sort(), [0, 1]);
+  assert.deepEqual(p.g.state.scores, [1, 1, 0]);
+  assert.deepEqual(p.view(0).result.mine, { text: "Zero", by: "Player 0", votes: 2, eligible: 5 });
+  assert.equal(p.view(1).result.won, true);
+});
+
+test("final vote with four crews: two votes each, on two different answers, and both count", () => {
+  const p = party(4);
+  p.host("configure", { teams: 4 });
+  seat(p, [0, 1, 2, 3]);
+  p.host("start");
+  for (const who of [0, 1, 2, 3]) p.play(who, "answer", `Answer ${who}`);
+  assert.equal(p.g.state.phase, "vote");
+  assert.equal(p.hostView().votesEach, 2);
+  assert.deepEqual([p.view(0).voting.limit, p.view(0).voting.left], [2, 2]);
+
+  // Both votes cannot go on one answer: a second tap takes the first back.
+  p.play(0, "vote", slot(p, 1));
+  p.play(0, "vote", slot(p, 1));
+  assert.deepEqual(p.g.state.votes, {});
+
+  p.play(0, "vote", slot(p, 1));
+  p.play(0, "vote", slot(p, 2));
+  assert.deepEqual(p.g.state.votes.p0, [1, 2]);
+  assert.equal(p.view(0).voting.left, 0);
+  // A third pick replaces the oldest.
+  p.play(0, "vote", slot(p, 3));
+  assert.deepEqual(p.g.state.votes.p0, [2, 3]);
+  assert.deepEqual(
+    [1, 2, 3].map((crew) => p.view(0).voting.options[slot(p, crew)].picked),
+    [false, true, true],
+  );
+
+  p.play(1, "vote", slot(p, 0));
+  // One of two used: not done yet.
+  assert.equal(p.hostView().votesIn, 1);
+  p.play(1, "vote", slot(p, 2));
+  p.play(2, "vote", slot(p, 0));
+  p.play(2, "vote", slot(p, 3));
+  p.play(3, "vote", slot(p, 0));
+  assert.equal(p.g.state.phase, "vote");
+  p.play(3, "vote", slot(p, 2));
+
+  assert.equal(p.g.state.phase, "result");
+  // Hot Sauce: p1, p2, p3. Lemons: p0, p1, p3. Pickles: p0, p2. Blueberries: nobody.
+  assert.deepEqual([...p.g.state.winners].sort(), [0, 2]);
+  assert.deepEqual(p.g.state.scores, [1, 0, 1, 0]);
+  const byCrew = Object.fromEntries(p.hostView().results.map((r: any) => [r.team, r.voters.length]));
+  assert.deepEqual(byCrew, { 0: 3, 1: 0, 2: 3, 3: 2 });
+});
+
+test("votes are one each below four crews, and never more than the answers you can pick from", () => {
+  const two = party(2);
+  seat(two, [0, 1]);
+  two.host("start");
+  two.play(0, "answer", "A");
+  two.play(1, "answer", "B");
+  assert.equal(two.hostView().votesEach, 1);
+  assert.equal(two.view(0).voting.limit, 1);
+
+  // Four crews, but only two answered: a writer has one answer left to pick, a bystander has two.
+  const four = party(4);
+  four.host("configure", { teams: 4 });
+  seat(four, [0, 1, 2, 3]);
+  four.host("start");
+  four.play(0, "answer", "A");
+  four.play(1, "answer", "B");
+  four.host("next");
+  assert.equal(four.g.state.phase, "vote");
+  assert.equal(four.view(0).voting.limit, 1);
+  assert.equal(four.view(2).voting.limit, 2);
+  four.play(0, "vote", slot(four, 1));
+  four.play(1, "vote", slot(four, 0));
+  four.play(2, "vote", slot(four, 0));
+  four.play(2, "vote", slot(four, 1));
+  four.play(3, "vote", slot(four, 0));
+  assert.equal(four.g.state.phase, "vote");
+  four.play(3, "vote", slot(four, 1));
+  assert.equal(four.g.state.phase, "result");
+  assert.deepEqual([...four.g.state.winners].sort(), [0, 1]);
+});
+
+test("heckles come from phones that have locked their answer, and are rate limited", () => {
   const p = party(30);
   p.host("configure", { teams: 3 });
   seat(p, Array.from({ length: 30 }, (_, i) => i % 3));
   p.host("start");
-  // Hot Sauce and Blueberries write; Lemons (players 2, 5, 8, ...) heckle.
-  assert.deepEqual(p.g.state.answering, [0, 1]);
-  assert.deepEqual(p.view(2).writing.heckles.length, 6);
-  assert.deepEqual(p.view(0).writing.heckles, []);
+  assert.deepEqual(p.view(2).huddle.heckles, []);
+  p.play(2, "heckle", "HA!");
+  assert.equal(p.sent.length, 0, "still writing: no heckling");
 
-  p.play(0, "heckle", "HA!");
+  // Lemons (players 2, 5, 8, ...) lock in and get the buttons.
+  for (let who = 2; who < 30; who += 3) p.play(who, "answer", `Lemon ${who}`);
+  assert.equal(p.view(2).huddle.heckles.length, 6);
   p.play(2, "heckle", "not a heckle");
-  assert.equal(p.sent.length, 0, "writers and made-up heckles are ignored");
+  assert.equal(p.sent.length, 0, "made-up heckles are ignored");
 
   p.play(2, "heckle", "HA!");
   p.play(2, "heckle", "OOF");
@@ -137,141 +413,227 @@ test("heckles come only from crews not writing, and are rate limited", () => {
   for (let who = 2; who < 30; who += 3) p.play(who, "heckle", "BOO");
   assert.equal(p.sent.length - before, HECKLES_PER_SECOND);
 
-  // Once voting opens, heckling stops.
+  // When writing closes, everyone may heckle; once the final vote opens, nobody may.
+  p.fire("write");
+  mock.timers.tick(5_000);
+  p.play(0, "heckle", "WOW");
+  assert.equal(p.sent.length - before, HECKLES_PER_SECOND + 1);
   p.host("next");
   mock.timers.tick(5_000);
   p.play(5, "heckle", "WOW");
-  assert.equal(p.sent.length - before, HECKLES_PER_SECOND);
+  assert.equal(p.sent.length - before, HECKLES_PER_SECOND + 1);
 });
 
-test("teammates and the projector see who is typing", () => {
+test("teammates and the projector see who is typing, until they lock", () => {
   const p = party(5);
   p.host("configure", { teams: 3 });
   seat(p, [0, 0, 0, 1, 2]);
   p.host("start");
   p.play(1, "typing", "typing");
   p.play(2, "typing", "idea");
-  p.play(4, "typing", "typing"); // Lemons are not writing: ignored
 
-  assert.deepEqual(p.view(0).writing.teammates, [
+  assert.deepEqual(p.view(0).huddle.teammates, [
     { name: "Player 1", typing: "typing" },
     { name: "Player 2", typing: "idea" },
   ]);
+  // Other crews are not told.
+  assert.deepEqual(p.view(3).huddle.teammates, []);
   assert.deepEqual(
     p.hostView().teams[0].members.map((m: any) => m.typing),
     [null, "typing", "idea"],
   );
-  assert.deepEqual(p.g.state.typing, { p1: "typing", p2: "idea" });
 
   p.play(2, "typing", "idle");
   p.leave(1);
   assert.deepEqual(p.g.state.typing, {});
 
   p.play(2, "typing", "typing");
-  p.play(0, "answer", "A sealed answer");
-  assert.deepEqual(p.g.state.typing, {}, "sending the answer clears the crew");
-  assert.equal(p.hostView().teams[0].sentBy, "Player 0");
+  p.play(2, "answer", "A sealed answer");
+  assert.deepEqual(p.g.state.typing, {}, "locking the answer ends the typing");
   p.play(2, "typing", "typing");
   assert.deepEqual(p.g.state.typing, {}, "nothing to type once the answer is in");
+  // A locked teammate drops off the "is typing" list: their answer is shown instead.
+  assert.deepEqual(p.view(0).huddle.teammates, []);
+
+  p.play(0, "typing", "typing");
+  p.fire("write");
+  assert.deepEqual(p.g.state.typing, {}, "writing is closed");
 });
 
 test("a big room votes, and the projector lists voters in the order they voted", () => {
   const p = party(60);
-  p.host("configure", { teams: 6, answering: 2 });
+  p.host("configure", { teams: 6 });
   seat(p, Array.from({ length: 60 }, (_, i) => i % 6));
   p.host("start");
-  p.play(0, "answer", "Zero");
-  p.play(1, "answer", "One");
+  // The first member of each crew locks in; nobody else does before the host moves on.
+  for (let crew = 0; crew < 6; crew++) p.play(crew, "answer", `Crew ${crew}`);
+  p.host("next");
   assert.equal(p.g.state.phase, "vote");
   const view = p.hostView();
-  assert.equal(view.voters, 40, "four neutral crews of ten vote");
-  assert.equal(view.voterList.length, 40);
+  assert.equal(view.ballot.length, 6);
+  assert.equal(view.voters, 60);
+  assert.equal(view.voterList.length, 60);
 
-  const ballot = p.g.state.ballot;
-  p.play(5, "vote", ballot.indexOf(0));
-  p.play(2, "vote", ballot.indexOf(1));
+  // Six crews means two votes each: a voter is "in" once both are spent.
+  p.play(7, "vote", slot(p, 0));
+  p.play(8, "vote", slot(p, 0));
+  p.play(8, "vote", slot(p, 3));
+  p.play(7, "vote", slot(p, 4));
   const after = p.hostView();
   assert.equal(after.votesIn, 2);
   assert.deepEqual(
     after.voterList.slice(0, 3).map((v: any) => [v.name, v.voted]),
     [
-      ["Player 5", true],
-      ["Player 2", true],
-      ["Player 3", false],
+      ["Player 7", true],
+      ["Player 8", true],
+      ["Player 0", false],
     ],
   );
-  assert.equal(p.view(3).voting.waiting, 38);
-  assert.deepEqual(p.view(3).voting.waitingOn, ["Player 3", "Player 4"]);
-});
-
-test("own-crew votes stay off limits and ties score for both", () => {
-  const p = party(4);
-  p.host("configure", { teams: 4, answering: 2 });
-  seat(p, [0, 1, 2, 3]);
-  p.host("start");
-  p.play(0, "answer", "Zero");
-  p.play(1, "answer", "One");
-  const ballot = p.g.state.ballot;
-  // Only two answers are up: the crews that wrote them sit the vote out.
-  p.play(0, "vote", ballot.indexOf(1));
-  assert.deepEqual(p.g.state.votes, {});
-  p.play(2, "vote", ballot.indexOf(0));
-  p.play(3, "vote", ballot.indexOf(1));
-  assert.equal(p.g.state.phase, "result");
-  assert.deepEqual([...p.g.state.winners].sort(), [0, 1]);
-  assert.deepEqual(p.g.state.scores, [1, 1, 0, 0]);
-  assert.equal(p.view(0).result.mine.votes, 1);
-  assert.equal(p.view(0).result.mine.eligible, 2);
+  assert.equal(p.view(3).voting.waiting, 58);
+  assert.deepEqual(p.view(3).voting.waitingOn, ["Player 0", "Player 1"]);
 });
 
 test("end-of-show awards: biggest zinger, crickets and loudest heckler", () => {
-  const p = party(6);
-  p.host("configure", { teams: 3, rounds: 3 });
-  seat(p, [0, 0, 1, 1, 2, 2]);
+  const p = party(3);
+  p.host("configure", { teams: 3, rounds: 2 });
+  seat(p, [0, 1, 2]);
   p.host("start");
 
-  // Round 1: Hot Sauce vs Blueberries, Lemons judge. Player 0's answer sweeps.
-  p.play(4, "heckle", "HA!");
+  // Round 1: Player 2 locks first and heckles while the others write.
+  p.play(2, "answer", "Plain");
+  p.play(2, "heckle", "HA!");
   mock.timers.tick(1_100);
-  p.play(4, "heckle", "OOF");
+  p.play(2, "heckle", "OOF");
   mock.timers.tick(1_100);
-  p.play(4, "heckle", "WOW");
+  p.play(2, "heckle", "WOW");
   p.play(0, "answer", "Gym Sock Sorbet");
-  p.play(2, "answer", "Nana's Couch Cushion");
-  let ballot = p.g.state.ballot;
-  p.play(4, "vote", ballot.indexOf(0));
-  p.play(5, "vote", ballot.indexOf(0));
+  p.play(1, "answer", "Nana's Couch Cushion");
+  // Player 0's answer takes two of three votes; nobody picks Player 1's.
+  p.play(1, "vote", slot(p, 0));
+  p.play(2, "vote", slot(p, 0));
+  p.play(0, "vote", slot(p, 2));
   assert.deepEqual(p.g.state.winners, [0]);
   p.host("next");
 
-  // Round 2: Lemons vs Hot Sauce, Blueberries judge. Player 2 judges; nobody likes Player 4's.
-  assert.deepEqual(p.g.state.answering, [0, 2]);
-  p.play(1, "answer", "Mint Mayo");
-  p.play(4, "answer", "Plain");
-  ballot = p.g.state.ballot;
-  p.play(2, "vote", ballot.indexOf(0));
-  p.play(3, "vote", ballot.indexOf(0));
+  // Round 2: answers go up but nobody votes in time. A round with no votes at
+  // all earns nobody the crickets award.
+  p.play(0, "answer", "Silence");
+  p.play(1, "answer", "More silence");
   p.host("next");
-
-  // Round 3: Blueberries vs Lemons, nobody votes in time. A round with no votes
-  // at all earns nobody the crickets award.
-  p.play(3, "answer", "Silence");
-  p.play(5, "answer", "More silence");
   p.host("next");
+  assert.deepEqual(p.g.state.winners, []);
   p.host("next");
   assert.equal(p.g.state.phase, "end");
 
   const { awards } = p.hostView();
-  assert.deepEqual(awards.zinger, { text: "Gym Sock Sorbet", by: "Player 0", team: 0, votes: 2, eligible: 2 });
-  assert.deepEqual(awards.crickets, { name: "Player 2", team: 1, count: 1 });
-  assert.deepEqual(awards.heckler, { name: "Player 4", team: 2, count: 3 });
+  assert.deepEqual(awards.zinger, { text: "Gym Sock Sorbet", by: "Player 0", team: 0, votes: 2, eligible: 3 });
+  assert.deepEqual(awards.crickets, { name: "Player 1", team: 1, count: 1 });
+  assert.deepEqual(awards.heckler, { name: "Player 2", team: 2, count: 3 });
   assert.equal(p.view(0).end.place, 1);
   assert.equal(p.view(0).end.won, true);
 
   // Encore starts a clean slate: no awards carried over.
   p.host("start");
-  // With no answers each round goes write -> result -> next round.
-  for (let i = 0; i < 6; i++) p.host("next");
+  // With no answers each round goes crew stage -> result -> next round.
+  for (let i = 0; i < 4; i++) p.host("next");
   assert.equal(p.g.state.phase, "end");
   assert.deepEqual(p.hostView().awards, { zinger: null, crickets: null, heckler: null });
+});
+
+test("AI prompts: offered only with a key, written from the theme and level, and not repeated on an encore", async () => {
+  const without = party(2);
+  assert.equal(without.hostView().aiAvailable, false);
+  without.host("configure", { source: "ai" });
+  assert.equal(without.g.state.config.source, "pack", "no key, no AI");
+
+  const requests: PromptRequest[] = [];
+  let batch = 0;
+  const p = party(2, {
+    aiAvailable: true,
+    generate: async (request) => {
+      requests.push(request);
+      batch += 1;
+      return Array.from({ length: request.count }, (_, i) => `Batch ${batch} prompt ${i + 1}`);
+    },
+  });
+  assert.equal(p.hostView().aiAvailable, true);
+  assert.deepEqual(p.hostView().aiLevels, ["Unc", "Clean", "Cheeky", "Spicy", "NSFW"]);
+  assert.equal(p.g.state.config.aiLevel, 1);
+
+  p.host("configure", { source: "ai", aiTheme: `  camping   trip ${"x".repeat(300)}`, aiLevel: 4, rounds: 3 });
+  p.host("configure", { aiLevel: 5 });
+  p.host("configure", { aiLevel: 1.5 });
+  assert.equal(p.g.state.config.aiLevel, 4);
+  assert.equal(p.g.state.config.aiTheme.length, 200);
+  assert.ok(p.g.state.config.aiTheme.startsWith("camping trip x"));
+  p.host("configure", { aiTheme: "camping trip" });
+  seat(p, [0, 1]);
+
+  p.host("start");
+  assert.equal(p.g.state.phase, "generating");
+  assert.equal(p.view(0).phase, "generating");
+  assert.equal(p.hostView().prompt, null);
+  await settle();
+  assert.equal(p.g.state.phase, "team");
+  assert.equal(p.syncs(), 1, "the screens are told when the prompts arrive");
+  assert.deepEqual(requests[0], { theme: "camping trip", level: 4, count: 3, avoid: [] });
+  assert.match(p.hostView().prompt, /^Batch 1 prompt [123]$/);
+  assert.equal(p.hostView().total, 3);
+
+  for (let i = 0; i < 6; i++) p.host("next");
+  assert.equal(p.g.state.phase, "end");
+  // Encore: the same settings, and the prompts just played are passed along to avoid.
+  p.host("start");
+  await settle();
+  assert.equal(p.g.state.phase, "team");
+  assert.deepEqual(requests[1], {
+    theme: "camping trip",
+    level: 4,
+    count: 3,
+    avoid: ["Batch 1 prompt 1", "Batch 1 prompt 2", "Batch 1 prompt 3"],
+  });
+  assert.match(p.hostView().prompt, /^Batch 2/);
+});
+
+test("AI prompts: a failure returns to the lobby with the reason, and a cancelled request is ignored", async () => {
+  let answer!: { resolve: (prompts: string[]) => void; reject: (error: Error) => void };
+  const p = party(2, {
+    aiAvailable: true,
+    generate: () => new Promise<string[]>((resolve, reject) => (answer = { resolve, reject })),
+  });
+  seat(p, [0, 1]);
+  p.host("configure", { source: "ai" });
+
+  p.host("start");
+  assert.equal(p.g.state.phase, "generating");
+  // Nothing else can start while the writer is busy.
+  p.host("start");
+  p.host("next");
+  assert.equal(p.g.state.phase, "generating");
+  await settle();
+  answer.reject(new Error("The AI writer's API key was refused. Check ANTHROPIC_API_KEY."));
+  await settle();
+  assert.equal(p.g.state.phase, "lobby");
+  assert.match(p.hostView().aiError, /API key was refused/);
+  assert.equal(p.syncs(), 1);
+
+  // Changing a setting clears the complaint.
+  p.host("configure", { aiLevel: 2 });
+  assert.equal(p.hostView().aiError, null);
+
+  // The host cancels, then starts a pack game; the late answer must not replace it.
+  p.host("start");
+  await settle();
+  const late = answer;
+  p.host("lobby");
+  assert.equal(p.g.state.phase, "lobby");
+  p.host("configure", { source: "pack" });
+  p.host("start");
+  assert.equal(p.g.state.phase, "team");
+  const prompt = p.hostView().prompt;
+  late.resolve(["Late 1", "Late 2", "Late 3", "Late 4", "Late 5"]);
+  await settle();
+  assert.equal(p.hostView().prompt, prompt);
+  assert.match(prompt, /^Prompt \d+$/);
+  assert.equal(p.syncs(), 1);
 });

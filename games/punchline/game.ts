@@ -1,10 +1,16 @@
 // Punchline: crews write the funniest answer to a prompt, everyone votes, and
 // the answer with the most votes scores for its crew.
 //
-// The host chooses how many crews there are (2 to 8), how many of them answer
-// each round (2, 3, ... or all), how many rounds to play, and which question
-// pack to use. Packs are the JSON files in ./questions: drop another one in and
-// it shows up in the lobby the next time the game is opened.
+// The host chooses how many crews there are (2 to 6), how many rounds to play,
+// and where the prompts come from: a question pack (the JSON files in
+// ./questions: drop another one in and it shows up in the lobby the next time
+// the game is opened) or, when ANTHROPIC_API_KEY is set, prompts written for
+// this show by Claude from a theme and a spice level.
+//
+// Every round has two stages. In the crew stage everybody writes and locks an
+// answer, then votes among their teammates' answers; each crew's favourite is
+// published. In the final vote every published answer goes up anonymously and
+// the whole room votes.
 //
 // This file holds the rules and views; server.ts hands them to the SDK. They
 // are split so the tests can drive the rules without starting a server.
@@ -68,27 +74,57 @@ function loadPacks(): Pack[] {
 // ---------- rules ----------
 
 /** Crew names, in the order crews are added. The clients pair each with a mascot and colour. */
-export const CREWS = ["Hot Sauce", "Blueberries", "Lemons", "Pickles", "Grapes", "Tangerines", "Mints", "Marshmallows"];
+export const CREWS = ["Hot Sauce", "Blueberries", "Lemons", "Pickles", "Grapes", "Tangerines"];
 export const MIN_CREWS = 2;
 export const MAX_CREWS = CREWS.length;
 const MAX_ROUNDS = 20;
 export const MAX_ANSWER = 100;
-export const WRITE_MS = 90_000;
-export const VOTE_MS = 45_000;
+/** The crew stage: this long to write and lock an answer... */
+export const WRITE_MS = 25_000;
+/** ...and this long in all, so the last five seconds are for voting only. */
+export const TEAM_MS = 30_000;
+export const VOTE_MS = 20_000;
+/** From this many crews up, everyone gets two votes on the final ballot. */
+export const TWO_VOTE_CREWS = 4;
 
-/** What a phone that is not writing this round can shout at the stage. */
+/** What a phone that has locked its answer can shout at the stage. */
 export const HECKLES = ["HA!", "OOF", "WOW", "*clap*", "BOO", "zzz"];
 /** One heckle per phone this often, at most. */
 export const HECKLE_GAP_MS = 1_000;
 /** And at most this many reach the projector in any one second, however big the room. */
 export const HECKLES_PER_SECOND = 8;
 
+/** The AI prompt writer's appropriateness slider, mildest first. */
+export const AI_LEVELS = ["Unc", "Clean", "Cheeky", "Spicy", "NSFW"];
+export const MAX_THEME = 200;
+/** How many already-played prompts the AI is told to steer clear of. */
+const AVOID_MAX = 60;
+
+export interface PromptRequest {
+  /** What the host typed; empty means a general party. Untrusted text. */
+  theme: string;
+  /** Index into AI_LEVELS. */
+  level: number;
+  count: number;
+  /** Prompts already played, not to be repeated. */
+  avoid: string[];
+}
+
+export interface Options {
+  /** Whether the lobby offers AI prompts. Defaults to whether ANTHROPIC_API_KEY is set. */
+  aiAvailable?: boolean;
+  /** Writes the prompts. Defaults to ./ai.ts, loaded only when first needed. */
+  generate?: (request: PromptRequest) => Promise<string[]>;
+}
+
 interface Config {
   teams: number;
-  /** How many crews write an answer each round. */
-  answering: number | "all";
   rounds: number;
   pack: string;
+  /** Where prompts come from. "ai" only counts while the AI writer is available. */
+  source: "pack" | "ai";
+  aiTheme: string;
+  aiLevel: number;
 }
 
 /** What a writer's phone last said about them: typing now, or paused with a draft. */
@@ -104,7 +140,7 @@ interface RoundRecord {
 }
 
 export interface State {
-  phase: "lobby" | "write" | "vote" | "result" | "end";
+  phase: "lobby" | "generating" | "team" | "vote" | "result" | "end";
   config: Config;
   /** Player id -> crew index. Players not in here have not picked a crew yet. */
   teamOf: Record<string, number>;
@@ -113,25 +149,23 @@ export interface State {
   round: number;
   /** Prompts already played since the game was opened, so "play again" brings new ones. */
   used: string[];
-  /** Next crew in the rotation of who answers. */
-  cursor: number;
-  /** Crews writing this round. */
-  answering: number[];
-  /** Crew index -> its answer. */
+  /** Crew stage: true for the first WRITE_MS, while answers can still be locked. */
+  writeOpen: boolean;
+  /** Crew stage: player id -> their locked answer. `order` counts up, so the earliest lock is the lowest. */
+  locked: Record<string, { text: string; order: number }>;
+  lockCount: number;
+  /** Crew stage: voter id -> the teammate whose answer they back. */
+  teamVotes: Record<string, string>;
+  /** Crew index -> the answer its crew published. */
   answers: Record<number, { text: string; by: string; byId: string }>;
   /** Crews with an answer, in the shuffled order shown on the ballot. */
   ballot: number[];
-  /**
-   * True when nobody has two answers to choose from besides their own (two
-   * crews, both answering). Everyone then votes on everything, own crew included.
-   */
-  openVote: boolean;
-  /** Player id -> crew voted for, in the order the votes came in. */
-  votes: Record<string, number>;
+  /** Player id -> the crews they voted for, oldest pick first. Keys are in the order players first voted. */
+  votes: Record<string, number[]>;
   winners: number[];
   /** Voters who could vote this round, counted when it was tallied. */
   eligible: number;
-  /** Writers on an answering crew who are typing or have a draft. */
+  /** Writers who are typing or have a draft. */
   typing: Record<string, Typing>;
   /** Player id -> when they last heckled (epoch ms). */
   heckledAt: Record<string, number>;
@@ -140,6 +174,10 @@ export interface State {
   /** Player id -> heckles sent this show. */
   heckles: Record<string, number>;
   history: RoundRecord[];
+  /** Counts AI requests, so an answer that arrives after a cancel is ignored. */
+  generation: number;
+  /** Why the last AI request failed, shown in the lobby. */
+  aiError: string | null;
 }
 
 export function shuffle<T>(items: readonly T[]): T[] {
@@ -153,32 +191,9 @@ export function shuffle<T>(items: readonly T[]): T[] {
 
 const teamIndexes = (g: Game<State>): number[] => Array.from({ length: g.state.config.teams }, (_, i) => i);
 const members = (g: Game<State>, team: number): Player[] => g.players.filter((p) => g.state.teamOf[p.id] === team);
-const answeringCount = (config: Config): number =>
-  config.answering === "all" ? config.teams : Math.min(config.answering, config.teams);
 
-/** Why the game cannot start yet, or null when it can. */
-function startProblem(g: Game<State>, packs: Pack[]): string | null {
-  if (!packs.some((entry) => entry.id === g.state.config.pack)) return "No question packs found.";
-  const empty = teamIndexes(g).filter((team) => members(g, team).length === 0);
-  if (empty.length > 0) return `Waiting for players on ${empty.map((team) => CREWS[team]).join(", ")}.`;
-  return null;
-}
-
-/** Ballot entries a crew's members could pick from if own answers are off limits. */
-const othersOnBallot = (g: Game<State>, team: number): number[] => g.state.ballot.filter((entry) => entry !== team);
-
-/** The crews this player may vote for; empty when they sit this vote out. */
-function choices(g: Game<State>, player: Player): number[] {
-  const team = g.state.teamOf[player.id];
-  if (g.state.phase !== "vote" || team === undefined) return [];
-  if (g.state.openVote) return g.state.ballot;
-  // With a single other answer there is nothing to choose: that crew's members sit out.
-  const others = othersOnBallot(g, team);
-  return others.length >= 2 ? others : [];
-}
-
-/** Connected players who may vote this round. */
-const voters = (g: Game<State>): Player[] => g.players.filter((p) => p.connected && choices(g, p).length > 0);
+/** Votes each player gets on the final ballot. */
+export const votesPerPlayer = (config: Config): number => (config.teams >= TWO_VOTE_CREWS ? 2 : 1);
 
 /**
  * Crew sizes counting connected players only: a phone that went home should
@@ -235,47 +250,123 @@ function pickPrompts(g: Game<State>, packs: Pack[]): string[] {
     g.state.used = g.state.used.filter((prompt) => !all.includes(prompt));
     fresh = all;
   }
-  const picked = shuffle(fresh).slice(0, g.state.config.rounds);
-  g.state.used.push(...picked);
-  return picked;
+  return shuffle(fresh).slice(0, g.state.config.rounds);
 }
 
+/** The curtain goes up on a fresh show with these prompts. */
+function raiseCurtain(g: Game<State>, prompts: string[]): void {
+  g.state.used.push(...prompts);
+  g.state.prompts = prompts;
+  g.state.round = 0;
+  g.state.scores = teamIndexes(g).map(() => 0);
+  g.state.history = [];
+  g.state.heckles = {};
+  beginRound(g);
+}
+
+// ----- the crew stage -----
+
 function beginRound(g: Game<State>): void {
-  const { teams } = g.state.config;
-  const count = answeringCount(g.state.config);
-  // Take turns in order, so every crew answers equally often.
-  g.state.answering = Array.from({ length: count }, (_, i) => (g.state.cursor + i) % teams).sort((a, b) => a - b);
-  g.state.cursor = (g.state.cursor + count) % teams;
+  g.state.locked = {};
+  g.state.lockCount = 0;
+  g.state.teamVotes = {};
   g.state.answers = {};
   g.state.ballot = [];
   g.state.votes = {};
   g.state.winners = [];
   g.state.eligible = 0;
   g.state.typing = {};
-  g.state.openVote = false;
-  g.state.phase = "write";
-  g.timer("write", WRITE_MS, () => beginVote(g));
+  g.state.phase = "team";
+  g.state.writeOpen = true;
+  g.timer("write", WRITE_MS, () => {
+    g.state.writeOpen = false;
+    g.state.typing = {};
+  });
+  g.timer("team", TEAM_MS, () => publish(g));
 }
 
-function beginVote(g: Game<State>): void {
+/** The teammates whose locked answers this player could back: never their own. */
+function candidates(g: Game<State>, player: Player): Player[] {
+  const team = g.state.teamOf[player.id];
+  if (g.state.phase !== "team" || team === undefined) return [];
+  return members(g, team).filter((p) => p.id !== player.id && p.id in g.state.locked);
+}
+
+/** Voting opens for you once your own answer is locked, and for everyone when writing closes. */
+const canTeamVote = (g: Game<State>, player: Player): boolean =>
+  (player.id in g.state.locked || !g.state.writeOpen) && candidates(g, player).length > 0;
+
+const teamVotesFor = (g: Game<State>, author: string): number =>
+  Object.values(g.state.teamVotes).filter((vote) => vote === author).length;
+
+/** Nothing left to wait for: everyone here has locked an answer and backed one (or has nobody to back). */
+function crewStageDone(g: Game<State>): boolean {
+  const here = g.players.filter((p) => p.connected && g.state.teamOf[p.id] !== undefined);
+  return (
+    here.length > 0 &&
+    here.every(
+      (p) =>
+        (p.id in g.state.locked || !g.state.writeOpen) &&
+        (candidates(g, p).length === 0 || p.id in g.state.teamVotes),
+    )
+  );
+}
+
+/**
+ * Each crew publishes its locked answer with the most teammate votes; on a tie
+ * the one locked first wins. A crew with nothing locked sits the round out.
+ */
+function publish(g: Game<State>): void {
   g.clearTimer("write");
+  g.clearTimer("team");
+  g.state.writeOpen = false;
   g.state.typing = {};
-  g.state.ballot = shuffle(g.state.answering.filter((team) => team in g.state.answers));
+  for (const team of teamIndexes(g)) {
+    let best: { player: Player; votes: number; order: number } | null = null;
+    for (const player of members(g, team)) {
+      const entry = g.state.locked[player.id];
+      if (!entry) continue;
+      const votes = teamVotesFor(g, player.id);
+      if (!best || votes > best.votes || (votes === best.votes && entry.order < best.order)) {
+        best = { player, votes, order: entry.order };
+      }
+    }
+    if (best) g.state.answers[team] = { text: g.state.locked[best.player.id].text, by: best.player.name, byId: best.player.id };
+  }
+  beginVote(g);
+}
+
+// ----- the final vote -----
+
+function beginVote(g: Game<State>): void {
+  g.state.ballot = shuffle(teamIndexes(g).filter((team) => team in g.state.answers));
   if (g.state.ballot.length < 2) {
     // Nothing to choose between: a lone answer wins the round unopposed.
     finishRound(g, g.state.ballot);
     return;
   }
   g.state.phase = "vote";
-  g.state.openVote = !g.players.some((p) => {
-    const team = g.state.teamOf[p.id];
-    return p.connected && team !== undefined && othersOnBallot(g, team).length >= 2;
-  });
   g.timer("vote", VOTE_MS, () => tally(g));
 }
 
+/** The crews this player may vote for: every answer but the one they wrote themselves. */
+function choices(g: Game<State>, player: Player): number[] {
+  if (g.state.phase !== "vote" || g.state.teamOf[player.id] === undefined) return [];
+  return g.state.ballot.filter((team) => g.state.answers[team].byId !== player.id);
+}
+
+/** How many votes this player can cast: one or two, but never more than they have answers to pick from. */
+const voteLimit = (g: Game<State>, player: Player): number =>
+  Math.min(votesPerPlayer(g.state.config), choices(g, player).length);
+
+/** Connected players who may vote this round. */
+const voters = (g: Game<State>): Player[] => g.players.filter((p) => p.connected && choices(g, p).length > 0);
+
+const votesUsed = (g: Game<State>, player: Player): number => g.state.votes[player.id]?.length ?? 0;
+const doneVoting = (g: Game<State>, player: Player): boolean => votesUsed(g, player) >= voteLimit(g, player);
+
 const votesFor = (g: Game<State>, team: number): number =>
-  Object.values(g.state.votes).filter((vote) => vote === team).length;
+  Object.values(g.state.votes).filter((picks) => picks.includes(team)).length;
 
 function tally(g: Game<State>): void {
   g.clearTimer("vote");
@@ -325,7 +416,7 @@ const nameOf = (g: Game<State>, id: string): string => g.players.find((p) => p.i
 /**
  * End-of-show awards. Each is left out when nobody earned it.
  * - zinger: the answer with the most votes in one round (ties: the bigger share, then the earlier round).
- * - crickets: whoever sent the most answers that drew no votes on a ballot others did vote on.
+ * - crickets: whoever wrote the most published answers that drew no votes on a ballot others did vote on.
  * - heckler: whoever heckled the most (three or more).
  */
 export function awards(g: Game<State>) {
@@ -361,13 +452,22 @@ export function awards(g: Game<State>) {
   return { zinger, crickets: quiet, heckler };
 }
 
-const showsPrompt = (phase: State["phase"]): boolean => phase === "write" || phase === "vote" || phase === "result";
+const showsPrompt = (phase: State["phase"]): boolean => phase === "team" || phase === "vote" || phase === "result";
 
 function clock(g: Game<State>) {
   const { phase } = g.state;
-  if (phase === "write") return { deadline: g.deadline("write") ?? null, duration: WRITE_MS };
-  if (phase === "vote") return { deadline: g.deadline("vote") ?? null, duration: VOTE_MS };
-  return { deadline: null, duration: 0 };
+  if (phase === "team") {
+    const deadline = g.deadline("team") ?? null;
+    return {
+      deadline,
+      duration: TEAM_MS,
+      // When writing closes and the voting-only stretch begins.
+      writeDeadline: deadline === null ? null : deadline - (TEAM_MS - WRITE_MS),
+      writeDuration: WRITE_MS,
+    };
+  }
+  if (phase === "vote") return { deadline: g.deadline("vote") ?? null, duration: VOTE_MS, writeDeadline: null, writeDuration: 0 };
+  return { deadline: null, duration: 0, writeDeadline: null, writeDuration: 0 };
 }
 
 /** "arcade.goobta.io/FROG": where latecomers join, without the scheme. */
@@ -383,17 +483,18 @@ function joinAddress(code: string, publicUrl: string | undefined): string {
 export function initialState(packs: Pack[]): State {
   return {
     phase: "lobby",
-    config: { teams: 2, answering: 2, rounds: 5, pack: packs[0]?.id ?? "" },
+    config: { teams: 2, rounds: 5, pack: packs[0]?.id ?? "", source: "pack", aiTheme: "", aiLevel: 1 },
     teamOf: {},
     scores: [],
     prompts: [],
     round: 0,
     used: [],
-    cursor: 0,
-    answering: [],
+    writeOpen: false,
+    locked: {},
+    lockCount: 0,
+    teamVotes: {},
     answers: {},
     ballot: [],
-    openVote: false,
     votes: {},
     winners: [],
     eligible: 0,
@@ -402,39 +503,81 @@ export function initialState(packs: Pack[]): State {
     heckleWindow: [],
     heckles: {},
     history: [],
+    generation: 0,
+    aiError: null,
   };
 }
 
-export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<State> {
+export function createDefinition(packs: Pack[] = loadPacks(), options: Options = {}): GameDefinition<State> {
   const packList = packs.map((entry) => ({
     id: entry.id,
     name: entry.name,
     description: entry.description,
     count: entry.prompts.length,
   }));
+  const aiAvailable = options.aiAvailable ?? !!process.env.ANTHROPIC_API_KEY;
+  // Loaded on demand: a show that sticks to packs never needs the Anthropic SDK.
+  const generate = options.generate ?? (async (request: PromptRequest) => (await import("./ai.ts")).generatePrompts(request));
+
+  const usesAi = (g: Game<State>): boolean => aiAvailable && g.state.config.source === "ai";
+
+  /** Why the game cannot start yet, or null when it can. */
+  function startProblem(g: Game<State>): string | null {
+    if (!usesAi(g) && !packs.some((entry) => entry.id === g.state.config.pack)) return "No question packs found.";
+    const empty = teamIndexes(g).filter((team) => members(g, team).length === 0);
+    if (empty.length > 0) return `Waiting for players on ${empty.map((team) => CREWS[team]).join(", ")}.`;
+    return null;
+  }
+
+  /** Ask Claude for this show's prompts; the curtain goes up when they arrive. */
+  function writePrompts(g: Game<State>): void {
+    const id = ++g.state.generation;
+    const { aiTheme, aiLevel, rounds } = g.state.config;
+    g.state.phase = "generating";
+    const current = () => g.state.generation === id && g.state.phase === "generating";
+    Promise.resolve()
+      .then(() => generate({ theme: aiTheme, level: aiLevel, count: rounds, avoid: g.state.used.slice(-AVOID_MAX) }))
+      .then(
+        (prompts) => {
+          if (!current()) return;
+          raiseCurtain(g, prompts.slice(0, rounds));
+          g.sync();
+        },
+        (error: unknown) => {
+          if (!current()) return;
+          console.error("[punchline] AI prompts failed:", error);
+          const message = error instanceof Error && error.message ? error.message : "Something went wrong.";
+          g.state.aiError = message.slice(0, 200);
+          g.state.phase = "lobby";
+          g.sync();
+        },
+      );
+  }
 
   return {
     init: () => initialState(packs),
 
     onHost: {
-      /** Change any of the lobby settings: { teams?, answering?, rounds?, pack? }. */
+      /** Change any of the lobby settings: { teams?, rounds?, pack?, source?, aiTheme?, aiLevel? }. */
       configure(g, data) {
         if (g.state.phase !== "lobby" || !data || typeof data !== "object") return;
         const config = g.state.config;
-        const { teams, answering, rounds, pack: packId } = data as Record<string, unknown>;
+        const { teams, rounds, pack: packId, source, aiTheme, aiLevel } = data as Record<string, unknown>;
         if (Number.isInteger(teams) && (teams as number) >= MIN_CREWS && (teams as number) <= MAX_CREWS) {
           config.teams = teams as number;
           // Players on a crew that no longer exists pick again.
           for (const [id, team] of Object.entries(g.state.teamOf)) if (team >= config.teams) delete g.state.teamOf[id];
         }
-        if (answering === "all") config.answering = "all";
-        else if (Number.isInteger(answering) && (answering as number) >= 2 && (answering as number) <= MAX_CREWS) {
-          config.answering = answering as number;
-        }
         if (Number.isInteger(rounds) && (rounds as number) >= 1 && (rounds as number) <= MAX_ROUNDS) {
           config.rounds = rounds as number;
         }
         if (typeof packId === "string" && packs.some((entry) => entry.id === packId)) config.pack = packId;
+        if (source === "pack" || (source === "ai" && aiAvailable)) config.source = source;
+        if (typeof aiTheme === "string") config.aiTheme = aiTheme.replace(/\s+/g, " ").trim().slice(0, MAX_THEME);
+        if (Number.isInteger(aiLevel) && (aiLevel as number) >= 0 && (aiLevel as number) < AI_LEVELS.length) {
+          config.aiLevel = aiLevel as number;
+        }
+        g.state.aiError = null;
       },
 
       /** Deal everyone into crews at random, as evenly as possible. */
@@ -454,28 +597,25 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
 
       start(g) {
         if (g.state.phase !== "lobby" && g.state.phase !== "end") return;
-        if (startProblem(g, packs)) return;
+        if (startProblem(g)) return;
         // Anyone still dithering when the curtain goes up joins the smallest crew.
         placeStragglers(g);
-        g.state.prompts = pickPrompts(g, packs);
-        g.state.round = 0;
-        g.state.scores = teamIndexes(g).map(() => 0);
-        g.state.cursor = 0;
-        g.state.history = [];
-        g.state.heckles = {};
-        beginRound(g);
+        g.state.aiError = null;
+        if (usesAi(g)) writePrompts(g);
+        else raiseCurtain(g, pickPrompts(g, packs));
       },
 
-      /** Move on without waiting: writing -> voting -> results -> next round. */
+      /** Move on without waiting: crew stage -> final vote -> results -> next round. */
       next(g) {
-        if (g.state.phase === "write") beginVote(g);
+        if (g.state.phase === "team") publish(g);
         else if (g.state.phase === "vote") tally(g);
         else if (g.state.phase === "result") advance(g);
       },
 
-      /** From the final scores back to the lobby, to change crews or settings. */
+      /** Back to the lobby, to change crews or settings: from the final scores, or to stop waiting for the AI. */
       lobby(g) {
-        if (g.state.phase === "end") g.state.phase = "lobby";
+        if (g.state.phase === "generating") g.state.generation += 1;
+        if (g.state.phase === "end" || g.state.phase === "generating") g.state.phase = "lobby";
       },
 
       exit(g) {
@@ -491,31 +631,38 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
         g.state.teamOf[player.id] = team;
       },
 
-      /** One answer per crew: the first teammate to send it locks it in. */
+      /** Lock in your own answer. One each, no take-backs; teammates see it straight away. */
       answer(g, player, text) {
-        const team = g.state.teamOf[player.id];
-        if (g.state.phase !== "write" || team === undefined || !g.state.answering.includes(team)) return;
-        if (team in g.state.answers || typeof text !== "string") return;
+        if (g.state.phase !== "team" || !g.state.writeOpen || g.state.teamOf[player.id] === undefined) return;
+        if (player.id in g.state.locked || typeof text !== "string") return;
         const clean = text.replace(/\s+/g, " ").trim().slice(0, MAX_ANSWER);
         if (clean === "") return;
-        g.state.answers[team] = { text: clean, by: player.name, byId: player.id };
-        for (const p of members(g, team)) delete g.state.typing[p.id];
-        if (g.state.answering.every((entry) => entry in g.state.answers)) beginVote(g);
+        g.state.locked[player.id] = { text: clean, order: g.state.lockCount++ };
+        delete g.state.typing[player.id];
+        if (crewStageDone(g)) publish(g);
+      },
+
+      /** Back a teammate's locked answer, or switch to another. Never your own. */
+      teamVote(g, player, authorId) {
+        if (g.state.phase !== "team" || typeof authorId !== "string" || !canTeamVote(g, player)) return;
+        if (!candidates(g, player).some((p) => p.id === authorId)) return;
+        g.state.teamVotes[player.id] = authorId;
+        if (crewStageDone(g)) publish(g);
       },
 
       /** A writer's phone says "typing", "idea" (paused with a draft) or "idle". Teammates and the projector see it. */
       typing(g, player, status) {
-        const team = g.state.teamOf[player.id];
-        if (g.state.phase !== "write" || team === undefined || !g.state.answering.includes(team)) return;
-        if (team in g.state.answers) return;
+        if (g.state.phase !== "team" || !g.state.writeOpen || g.state.teamOf[player.id] === undefined) return;
+        if (player.id in g.state.locked) return;
         if (status === "typing" || status === "idea") g.state.typing[player.id] = status;
         else delete g.state.typing[player.id];
       },
 
-      /** A reaction from a phone whose crew is not writing this round, shown on the projector. */
+      /** A reaction from a phone that has locked its answer (or run out of time to), shown on the projector. */
       heckle(g, player, kind) {
         const team = g.state.teamOf[player.id];
-        if (g.state.phase !== "write" || team === undefined || g.state.answering.includes(team)) return;
+        if (g.state.phase !== "team" || team === undefined) return;
+        if (g.state.writeOpen && !(player.id in g.state.locked)) return;
         if (typeof kind !== "string" || !HECKLES.includes(kind)) return;
         const now = Date.now();
         if (now - (g.state.heckledAt[player.id] ?? 0) < HECKLE_GAP_MS) return;
@@ -527,27 +674,44 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
         g.send("host", "heckle", { kind, name: player.name, team });
       },
 
-      /** `index` is a position on the ballot, which hides whose answer is whose. */
+      /**
+       * Tap an answer on the final ballot. `index` is a position on the ballot,
+       * which hides whose answer is whose. Tapping a pick again takes it back;
+       * a new pick past the limit replaces the oldest one.
+       */
       vote(g, player, index) {
-        if (g.state.phase !== "vote" || player.id in g.state.votes) return;
+        if (g.state.phase !== "vote") return;
         const team = g.state.ballot[index];
         if (team === undefined || !choices(g, player).includes(team)) return;
-        g.state.votes[player.id] = team;
-        const waiting = voters(g).filter((p) => !(p.id in g.state.votes));
-        if (waiting.length === 0) tally(g);
+        const picks = g.state.votes[player.id] ?? [];
+        if (picks.includes(team)) picks.splice(picks.indexOf(team), 1);
+        else {
+          picks.push(team);
+          if (picks.length > voteLimit(g, player)) picks.shift();
+        }
+        if (picks.length > 0) g.state.votes[player.id] = picks;
+        else delete g.state.votes[player.id];
+        if (voters(g).every((p) => doneVoting(g, p))) tally(g);
       },
     },
 
     onLeave(g, player) {
       delete g.state.typing[player.id];
+      // The room may have been waiting on just this phone.
+      if (g.state.phase === "team" && crewStageDone(g)) publish(g);
+      else if (g.state.phase === "vote" && voters(g).length > 0 && voters(g).every((p) => doneVoting(g, p))) tally(g);
     },
 
     hostView(g) {
-      const { phase, config, prompts, round, answering, answers, ballot, votes, winners, teamOf, typing } = g.state;
+      const { phase, config, prompts, round, answers, ballot, votes, winners, teamOf, typing, locked, teamVotes } = g.state;
       const canVote = voters(g);
-      // Voters in the order they voted, then everyone still deciding.
-      const voted = Object.keys(votes);
-      const pending = canVote.filter((p) => !(p.id in votes));
+      // Voters who have used every vote, in the order they started voting, then everyone still deciding.
+      const done = Object.keys(votes).filter((id) => {
+        const player = g.players.find((p) => p.id === id);
+        return !player || doneVoting(g, player);
+      });
+      const pending = canVote.filter((p) => !done.includes(p.id));
+      const writers = g.players.filter((p) => teamOf[p.id] !== undefined && (p.connected || p.id in locked));
       return {
         phase,
         code: g.code,
@@ -556,51 +720,64 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
         total: prompts.length || config.rounds,
         config,
         packs: packList,
+        aiAvailable,
+        aiLevels: AI_LEVELS,
+        aiError: g.state.aiError,
+        usesAi: usesAi(g),
         players: g.players.length,
-        teams: teamIndexes(g).map((team) => ({
-          index: team,
-          name: CREWS[team],
-          score: g.state.scores[team] ?? 0,
-          members: members(g, team).map((p) => ({
-            name: p.name,
-            connected: p.connected,
-            typing: phase === "write" ? (typing[p.id] ?? null) : null,
-          })),
-          // Who writes this round. Public anyway: the projector showed it while they wrote.
-          answering: (phase === "write" || phase === "vote") && answering.includes(team),
-          submitted: phase === "write" && team in answers,
-          sentBy: phase === "write" ? (answers[team]?.by ?? null) : null,
-        })),
+        teams: teamIndexes(g).map((team) => {
+          const crew = members(g, team);
+          const writing = crew.filter((p) => p.connected || p.id in locked);
+          const lockedIn = writing.filter((p) => p.id in locked).length;
+          return {
+            index: team,
+            name: CREWS[team],
+            score: g.state.scores[team] ?? 0,
+            members: crew.map((p) => ({
+              name: p.name,
+              connected: p.connected,
+              typing: phase === "team" ? (typing[p.id] ?? null) : null,
+            })),
+            // Progress only: the projector never sees an answer before the final vote.
+            writers: phase === "team" ? writing.length : 0,
+            locked: phase === "team" ? lockedIn : 0,
+            teamVotes: phase === "team" ? crew.filter((p) => p.id in teamVotes).length : 0,
+            submitted: phase === "team" && writing.length > 0 && lockedIn === writing.length,
+          };
+        }),
         unassigned: g.players.filter((p) => !(p.id in teamOf)).map((p) => p.name),
-        problem: startProblem(g, packs),
+        problem: startProblem(g),
         prompt: showsPrompt(phase) ? (prompts[round] ?? null) : null,
         ...clock(g),
+        writeOpen: phase === "team" && g.state.writeOpen,
+        lockedIn: phase === "team" ? writers.filter((p) => p.id in locked).length : 0,
+        writers: phase === "team" ? writers.length : 0,
         // The ballot never says whose answer is whose, so the projector cannot leak it.
         ballot: phase === "vote" ? ballot.map((team) => answers[team].text) : null,
-        openVote: phase === "vote" && g.state.openVote,
-        votesIn: voted.length,
-        voters: phase === "vote" ? new Set([...voted, ...canVote.map((p) => p.id)]).size : 0,
+        votesEach: votesPerPlayer(config),
+        votesIn: done.length,
+        voters: phase === "vote" ? new Set([...done, ...canVote.map((p) => p.id)]).size : 0,
         voterList:
           phase === "vote"
             ? [
-                ...voted.map((id) => ({ name: nameOf(g, id), team: teamOf[id] ?? null, voted: true })),
+                ...done.map((id) => ({ name: nameOf(g, id), team: teamOf[id] ?? null, voted: true })),
                 ...pending.map((p) => ({ name: p.name, team: teamOf[p.id] ?? null, voted: false })),
               ]
             : null,
         results:
           phase === "result"
-            ? answering
+            ? teamIndexes(g)
                 .map((team) => ({
                   team,
                   name: CREWS[team],
                   text: answers[team]?.text ?? null,
                   by: answers[team]?.by ?? null,
                   voters: g.players
-                    .filter((p) => votes[p.id] === team)
+                    .filter((p) => votes[p.id]?.includes(team))
                     .map((p) => ({ name: p.name, team: teamOf[p.id] ?? null })),
                   won: winners.includes(team),
                 }))
-                .sort((a, b) => b.voters.length - a.voters.length || a.team - b.team)
+                .sort((a, b) => b.voters.length - a.voters.length || Number(b.text !== null) - Number(a.text !== null) || a.team - b.team)
             : null,
         eligible: phase === "result" ? g.state.eligible : 0,
         unopposed: phase === "result" && ballot.length === 1,
@@ -611,13 +788,15 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
     },
 
     playerView(g, player) {
-      const { phase, config, prompts, round, answering, answers, ballot, votes, winners, teamOf, typing } = g.state;
+      const { phase, config, prompts, round, answers, ballot, votes, winners, teamOf, typing, locked, teamVotes } = g.state;
       const team: number | undefined = teamOf[player.id];
+      const crew = team === undefined ? [] : members(g, team);
       const mine = choices(g, player);
-      const voted = votes[player.id];
-      const writing = phase === "write" && team !== undefined && answering.includes(team);
-      const pending = phase === "vote" ? voters(g).filter((p) => !(p.id in votes)) : [];
+      const picks = votes[player.id] ?? [];
+      const limit = voteLimit(g, player);
+      const pending = phase === "vote" ? voters(g).filter((p) => !doneVoting(g, p)) : [];
       const ownAnswer = team !== undefined ? answers[team] : undefined;
+      const hasLocked = player.id in locked;
       return {
         phase,
         name: player.name,
@@ -634,20 +813,32 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
         })),
         prompt: showsPrompt(phase) ? (prompts[round] ?? null) : null,
         ...clock(g),
-        writing:
-          phase === "write"
+        // The crew stage. Only this player's own crew is in here: other crews'
+        // answers stay on their phones until the final vote.
+        huddle:
+          phase === "team" && team !== undefined
             ? {
-                up: writing,
-                // Only the crew that wrote it sees an answer before the vote.
-                answer: ownAnswer ? { text: ownAnswer.text, by: ownAnswer.by } : null,
-                teams: answering.map((entry) => CREWS[entry]),
+                writeOpen: g.state.writeOpen,
+                mine: locked[player.id]?.text ?? null,
                 max: MAX_ANSWER,
-                teammates: writing
-                  ? members(g, team)
-                      .filter((p) => p.id !== player.id && p.connected)
-                      .map((p) => ({ name: p.name, typing: typing[p.id] ?? null }))
-                  : [],
-                heckles: writing ? [] : HECKLES,
+                // Locked answers only, in the order they were locked. No live drafts.
+                answers: crew
+                  .filter((p) => p.id in locked)
+                  .sort((a, b) => locked[a.id].order - locked[b.id].order)
+                  .map((p) => ({
+                    id: p.id,
+                    text: locked[p.id].text,
+                    byName: p.name,
+                    votes: teamVotesFor(g, p.id),
+                    mine: p.id === player.id,
+                    picked: teamVotes[player.id] === p.id,
+                  })),
+                myVote: teamVotes[player.id] ?? null,
+                canVote: canTeamVote(g, player),
+                teammates: crew
+                  .filter((p) => p.id !== player.id && p.connected && !(p.id in locked))
+                  .map((p) => ({ name: p.name, typing: typing[p.id] ?? null })),
+                heckles: hasLocked || !g.state.writeOpen ? HECKLES : [],
                 heckleGap: HECKLE_GAP_MS,
               }
             : null,
@@ -655,13 +846,17 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
           phase === "vote"
             ? {
                 canVote: mine.length > 0,
+                limit,
+                left: Math.max(0, limit - picks.length),
                 options: ballot.map((entry, index) => ({
                   index,
                   text: answers[entry].text,
                   own: entry === team,
+                  // The one answer nobody may vote for: their own.
+                  yours: answers[entry].byId === player.id,
                   allowed: mine.includes(entry),
+                  picked: picks.includes(entry),
                 })),
-                picked: voted === undefined ? null : ballot.indexOf(voted),
                 waitingOn: pending.slice(0, 2).map((p) => p.name),
                 waiting: pending.length,
               }
@@ -671,10 +866,8 @@ export function createDefinition(packs: Pack[] = loadPacks()): GameDefinition<St
             ? {
                 won: team !== undefined && winners.includes(team),
                 winners: winners.map((entry) => CREWS[entry]),
-                answers: answering
-                  .filter((entry) => entry in answers)
-                  .map((entry) => ({ name: CREWS[entry], text: answers[entry].text })),
-                // This crew's own answer, if it wrote one this round.
+                answers: ballot.map((entry) => ({ name: CREWS[entry], text: answers[entry].text })),
+                // This crew's published answer, if it had one this round.
                 mine:
                   team !== undefined && ownAnswer && ballot.includes(team)
                     ? { text: ownAnswer.text, by: ownAnswer.by, votes: votesFor(g, team), eligible: g.state.eligible }

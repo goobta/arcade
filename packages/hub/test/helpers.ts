@@ -11,7 +11,7 @@ export function fixture(id: string): GameManifest {
   return game;
 }
 
-export function freePort(): Promise<number> {
+function probePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const probe = createServer();
     probe.once("error", reject);
@@ -20,6 +20,18 @@ export function freePort(): Promise<number> {
       probe.close(() => resolve(port));
     });
   });
+}
+
+/**
+ * A port nothing is listening on. The hub refuses a game port base above
+ * 65000, and the system hands out ports right up to 65535, so keep asking
+ * until one is comfortably below that.
+ */
+export async function freePort(): Promise<number> {
+  for (;;) {
+    const port = await probePort();
+    if (port <= 64_900) return port;
+  }
 }
 
 export function alive(pid: number | undefined): boolean {

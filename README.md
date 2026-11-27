@@ -169,7 +169,20 @@ startup.
 
 A game that needs npm packages beyond the SDK lists them in its own
 `package.json` and commits its own `package-lock.json`; the Docker build
-installs it in place.
+installs it in place. Locally, run `npm install` in that game's folder once.
+
+A game sees none of the hub's environment unless it asks. To let a game read a
+variable (an API key, say), name it in an optional `"env"` list:
+
+```json
+{ "env": ["ANTHROPIC_API_KEY"] }
+```
+
+Each name the hub has set is passed to that game's process; names it does not
+have are left out. Names must be capitals, digits and underscores. `ARCADE_*`
+names and the ones the hub sets itself (`PATH`, `HOME`, `PORT`, `HOST`,
+`BASE_PATH`, `TZ`, `NODE_ENV`, `NODE_OPTIONS`) are refused, so a game can never
+ask for the host PIN.
 
 ### Games in their own repositories
 
@@ -215,6 +228,7 @@ Environment variables for the hub:
 | `ARCADE_MAX_PLAYERS` | `16` | Players per party |
 | `ARCADE_MAX_SESSIONS` | `4` | Parties open at once |
 | `ARCADE_GAMES_DIR` | `./games` | Where games are found |
+| `ANTHROPIC_API_KEY` | (unset) | Optional. Passed to Punchline, which then offers AI-written prompts |
 
 ## How it fits together
 
@@ -232,7 +246,8 @@ Environment variables for the hub:
 - Game traffic goes through the hub at `/g/<launch id>/…`. The id is random per
   launch, so a tab left open from an earlier game cannot reach the next one.
 - A game process is given a fresh environment, so the host PIN and the hub's
-  other settings never reach game code. Games are otherwise trusted: they run
+  other settings never reach game code. The only exceptions are variables a
+  game's manifest names in `"env"`. Games are otherwise trusted: they run
   as the same user as the hub.
 - Parties live in memory. Restarting the hub ends them.
 
@@ -251,7 +266,8 @@ npm run typecheck
 ```
 
 The end-to-end test needs Chromium for Playwright
-(`npx playwright install chromium`, once).
+(`npx playwright install chromium`, once). Punchline's tests and the typecheck
+need its own packages: `cd games/punchline && npm install`, once.
 
 ## Deploy
 

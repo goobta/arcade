@@ -1,4 +1,4 @@
-// The phone: pick a crew, write, heckle, vote, see how it went.
+// The phone: pick a crew, write and lock an answer, back a teammate's, vote, see how it went.
 var game = Arcade.connect();
 var app = document.getElementById("app");
 var fx = document.getElementById("fx");
@@ -109,13 +109,13 @@ function picker(view, heading) {
     el(
       "p",
       { class: "hint" },
-      view.phase === "lobby" ? "Tap another crew any time before the show starts." : "You'll join in from the next answer.",
+      view.phase === "lobby" ? "Tap another crew any time before the show starts." : "You'll join in straight away.",
     ),
     emcee(line, { cls: "phone" }),
   );
 }
 
-// ---------- writing ----------
+// ---------- the crew stage: write, lock, back a teammate ----------
 
 function setTyping(status) {
   if (status === typingSent) return;
@@ -123,8 +123,8 @@ function setTyping(status) {
   game.send("typing", status);
 }
 
-function presence(w) {
-  return w.teammates.map(function (m) {
+function presence(h) {
+  return h.teammates.map(function (m) {
     if (m.typing === "typing") return el("span", { class: "who typing" }, m.name + " is typing", dots());
     if (m.typing === "idea") return el("span", { class: "who idea" }, m.name + " has an idea");
     return el("span", { class: "who idle" }, m.name + " " + pick(QUIPS.idle, m.name));
@@ -139,24 +139,94 @@ function promptCard(view) {
   return el("div", { class: "prompt-card sticker" }, el("span", { class: "tag" }, "THE PROMPT"), el("p", { "data-fit": "20" }, view.prompt));
 }
 
+/**
+ * The crew-stage clock: "WRITE" drains until writing closes, then "VOTE!" for
+ * the last few seconds. It runs off the deadlines alone, so it does not need
+ * redrawing when writing closes.
+ */
+function stageBar(view) {
+  var fillBar = el("i", {});
+  var star = el("span", { class: "spark" });
+  var label = el("span", { class: "left" }, "");
+  var node = el("div", { class: "timebar staged", role: "img" }, fillBar, star, label);
+  if (view.deadline) {
+    countdown(game, node, view.deadline, view.duration, function (left) {
+      var voteMs = view.deadline - view.writeDeadline;
+      var writing = left > voteMs;
+      var part = writing ? left - voteMs : left;
+      var frac = Math.min(1, part / (writing ? view.writeDuration : voteMs));
+      node.classList.toggle("voting", !writing);
+      fillBar.style.width = (frac * 100).toFixed(2) + "%";
+      star.style.left = "calc(" + (frac * 100).toFixed(2) + "% - 11px)";
+      label.textContent = (writing ? "WRITE · " : "VOTE! · ") + clockText(part);
+      node.setAttribute("aria-label", Math.ceil(part / 1000) + " seconds left to " + (writing ? "write" : "vote"));
+    });
+  }
+  return node;
+}
+
+/** Teammates' locked answers, as cards to tap. Your own is not in here: it has its own card. */
+function mates(view) {
+  var h = view.huddle;
+  var others = h.answers.filter(function (answer) {
+    return !answer.mine;
+  });
+  if (!others.length) return [];
+  return [
+    el("span", { class: "kicker" }, h.canVote ? "BACK YOUR CREW'S BEST" : "LOCKED IN BY YOUR CREW"),
+    el(
+      "div",
+      { class: "options many mates" },
+      others.map(function (answer, i) {
+        var cls = "option sticker";
+        if (answer.picked) cls += " picked";
+        else if (!h.canVote) cls += " dim";
+        return el(
+          "button",
+          {
+            class: cls,
+            type: "button",
+            "aria-pressed": answer.picked ? "true" : "false",
+            disabled: !h.canVote,
+            "data-author": answer.id,
+            style: "--tilt:" + (i % 2 ? 1 : -1) + "deg",
+            onclick: function () {
+              game.send("teamVote", answer.id);
+            },
+          },
+          avatar(answer.byName, view.team, 40),
+          el(
+            "span",
+            { class: "words" },
+            el("span", { class: "text" }, answer.text),
+            el("span", { class: "who" }, answer.byName + " · " + plural(answer.votes, "vote")),
+          ),
+          answer.picked ? el("span", { class: "stamp vote" + (once("pick" + view.round + answer.id) ? " in" : "") }, "YOUR PICK") : null,
+        );
+      }),
+    ),
+  ];
+}
+
 function writeForm(view) {
-  var w = view.writing;
+  var h = view.huddle;
   if (draft.round !== view.round) {
     draft = { round: view.round, text: "" };
     typingSent = "idle";
   }
-  var left = el("span", {}, w.max - draft.text.length + " left");
+  var left = el("span", {}, h.max - draft.text.length + " left");
   var send = el("button", { id: "send", class: "big pink", type: "submit", disabled: !draft.text.trim() }, "Lock it in!");
-  var people = el("div", { class: "presence" }, presence(w));
+  var people = el("div", { class: "presence" }, presence(h));
+  var crew = el("div", { class: "crew-answers" }, mates(view));
   var box = el("textarea", {
     id: "answer",
-    maxLength: w.max,
+    maxLength: h.max,
     rows: 3,
     placeholder: "Make it sting",
     value: draft.text,
     oninput: function () {
       draft.text = box.value;
-      left.textContent = w.max - box.value.length + " left";
+      left.textContent = h.max - box.value.length + " left";
       send.disabled = !box.value.trim();
       setTyping(box.value.trim() ? "typing" : "idle");
       clearTimeout(typingTimer);
@@ -175,118 +245,129 @@ function writeForm(view) {
         if (box.value.trim()) game.send("answer", box.value);
       },
     },
-    timebar(view, true),
+    stageBar(view),
     promptCard(view),
-    el("label", { for: "answer" }, "Your crew's answer"),
+    el("label", { for: "answer" }, "Your answer"),
     el("div", { class: "speech" }, box),
-    el("div", { class: "under" }, el("span", {}, "First one sent counts. Huddle up!"), left),
-    people,
+    el("div", { class: "under" }, el("span", {}, "Lock yours in, then vote for a teammate's."), left),
     send,
+    people,
+    crew,
   );
   return {
     node: form,
     update: function (next) {
-      people.replaceChildren.apply(people, presence(next.writing));
+      people.replaceChildren.apply(people, presence(next.huddle));
+      crew.replaceChildren.apply(crew, mates(next));
     },
   };
 }
 
-function sealed(view) {
-  var w = view.writing;
-  return center(
-    el("p", { class: "kicker" }, view.prompt),
-    el(
-      "div",
-      { class: "sealed sticker" },
-      el("span", { class: "tag" }, "YOUR CREW'S ANSWER"),
-      el("p", { id: "sent" }, "“" + w.answer.text + "”"),
-      el("span", { class: "stamp locked" + (once("sealed" + view.round) ? " in" : "") }, "LOCKED IN"),
-    ),
-    el("p", { class: "muted" }, "Sent by " + w.answer.by + ". Waiting for the other crews."),
+function heckleButtons(h) {
+  var grid = el(
+    "div",
+    { class: "heckles row" },
+    h.heckles.map(function (kind, i) {
+      var button = el(
+        "button",
+        {
+          class: "heckle-btn",
+          type: "button",
+          "data-heckle": kind,
+          style: "background:" + (HECKLE_COLOURS[kind] || "#FFD23F") + "; --tilt:" + [-2, 2, 1, -1.5, -2, 1.5][i % 6] + "deg",
+          onclick: function () {
+            var now = Date.now();
+            if (now < heckleReadyAt) return;
+            heckleReadyAt = now + h.heckleGap;
+            game.send("heckle", kind);
+            var pop = el("span", { class: "pop", style: "left:" + (button.offsetLeft + button.offsetWidth / 2 - 30) + "px; top:" + (button.offsetTop - 10) + "px" }, kind);
+            pop.addEventListener("animationend", function () {
+              pop.remove();
+            });
+            grid.append(pop);
+            button.classList.add("pressed");
+            setTimeout(function () {
+              button.classList.remove("pressed");
+            }, h.heckleGap);
+          },
+        },
+        kind,
+      );
+      return button;
+    }),
   );
+  return grid;
 }
 
-function heckle(view) {
-  var w = view.writing;
-  var buttons = w.heckles.map(function (kind, i) {
-    var button = el(
-      "button",
-      {
-        class: "heckle-btn",
-        type: "button",
-        "data-heckle": kind,
-        style: "background:" + (HECKLE_COLOURS[kind] || "#FFD23F") + "; --tilt:" + [-2, 2, 1, -1.5, -2, 1.5][i % 6] + "deg",
-        onclick: function () {
-          var now = Date.now();
-          if (now < heckleReadyAt) return;
-          heckleReadyAt = now + w.heckleGap;
-          game.send("heckle", kind);
-          var pop = el("span", { class: "pop", style: "left:" + (button.offsetLeft + button.offsetWidth / 2 - 30) + "px; top:" + (button.offsetTop - 10) + "px" }, kind);
-          pop.addEventListener("animationend", function () {
-            pop.remove();
-          });
-          grid.append(pop);
-          button.classList.add("pressed");
-          setTimeout(function () {
-            button.classList.remove("pressed");
-          }, w.heckleGap);
-        },
-      },
-      kind,
-    );
-    return button;
-  });
-  var grid = el("div", { class: "heckles" }, buttons);
+/** After locking (or once writing has closed): your answer, your crew's, and something to do while the clock runs. */
+function huddle(view) {
+  var h = view.huddle;
+  var others = h.answers.length - (h.mine ? 1 : 0);
+  var hint;
+  if (!others) hint = h.writeOpen ? "Waiting for your crew to lock theirs in." : h.mine ? "Yours goes up for your crew." : "Nobody locked one in. Your crew sits this one out.";
+  else if (!h.myVote) hint = "Tap the answer your crew should send up.";
+  else hint = "Vote's in! Tap another to change it.";
   return el(
     "div",
-    { class: "heckle-screen" },
-    el("div", { class: "heading" }, el("span", { class: "kicker" }, "YOU'RE A JUDGE THIS ROUND"), el("h1", {}, "Heckle the writers")),
-    emcee(verb(w.teams, "is", "are") + " writing. Every tap pops up on the big screen. Heckle responsibly.", {
-      cls: "phone",
-      id: "waiting",
-    }),
-    grid,
-    el("p", { class: "hint" }, "You vote as soon as the answers are in."),
+    { class: "huddle" },
+    stageBar(view),
+    el("p", { class: "kicker" }, view.prompt),
+    h.mine
+      ? el(
+          "div",
+          { class: "sealed sticker" },
+          el("span", { class: "tag" }, "YOUR ANSWER"),
+          el("p", { id: "sent" }, "“" + h.mine + "”"),
+          el("span", { class: "stamp locked" + (once("sealed" + view.round) ? " in" : "") }, "LOCKED IN"),
+        )
+      : el("h1", { id: "too-late" }, "Pens down!"),
+    mates(view),
+    el("p", { class: "muted", id: "huddle-hint" }, hint),
+    el("div", { class: "while-waiting" }, el("span", { class: "kicker" }, "HECKLE WHILE YOU WAIT"), heckleButtons(h)),
   );
 }
 
-// ---------- voting ----------
+/** The AI is writing the show's prompts. */
+function generating(view) {
+  return center(
+    mascot(view.team, 110, "focus", "bob"),
+    el("h1", { id: "generating" }, "Writing your prompts", dots()),
+    el("p", { class: "muted" }, "Fresh material, made for this room. Eyes on the big screen."),
+  );
+}
+
+// ---------- the final vote ----------
 
 function vote(view) {
   var v = view.voting;
-  if (!v.canVote) {
-    return center(
-      mascot(view.team, 110, "focus", "bob"),
-      el("h1", {}, "Fingers crossed"),
-      el("p", { class: "muted", id: "sitting-out" }, "Your crew's answer is up. The others are voting."),
-      timebar(view, false),
-    );
-  }
-  var waiting =
-    v.picked === null
-      ? "Tap the one that got you."
-      : v.waiting === 0
-        ? "Vote's in!"
-        : "Vote's in! Waiting on " + (v.waiting <= 2 ? list(v.waitingOn) : plural(v.waiting, "more judge")) + "…";
+  var waiting;
+  if (!v.canVote) waiting = "Nothing for you to vote on this round.";
+  else if (v.left > 0) waiting = (v.limit > 1 ? "Votes left: " + v.left + ". Two different answers." : "Tap the one that got you.");
+  else if (v.waiting === 0) waiting = "Votes are in!";
+  else waiting = (v.limit > 1 ? "Votes are in!" : "Vote's in!") + " Tap again to change. Waiting on " + (v.waiting <= 2 ? list(v.waitingOn) : plural(v.waiting, "more judge")) + "…";
   return el(
     "div",
     { class: "ballot" },
     timebar(view, false),
-    el("div", { class: "heading" }, el("span", { class: "kicker" }, view.prompt), el("h1", {}, "Which one got you?")),
+    el(
+      "div",
+      { class: "heading" },
+      el("span", { class: "kicker" }, view.prompt),
+      el("h1", {}, v.limit > 1 ? "Pick your top " + v.limit : "Which one got you?"),
+    ),
     el(
       "div",
       { class: "options" + (v.options.length > 3 ? " many" : "") },
       v.options.map(function (option, i) {
-        var picked = v.picked === option.index;
         var cls = "option sticker";
-        if (picked) cls += " picked";
-        else if (v.picked !== null || !option.allowed) cls += " dim";
+        if (option.picked) cls += " picked";
+        else if (!option.allowed) cls += " dim";
         return el(
           "button",
           {
             class: cls,
-            "aria-pressed": picked ? "true" : "false",
-            disabled: v.picked !== null || !option.allowed,
+            "aria-pressed": option.picked ? "true" : "false",
+            disabled: !option.allowed,
             "data-option": option.index,
             style: "--tilt:" + (i % 2 ? 1.5 : -1.5) + "deg",
             onclick: function () {
@@ -298,13 +379,13 @@ function vote(view) {
             "span",
             { class: "words" },
             el("span", { class: "text" }, option.text),
-            option.own ? el("span", { class: "who" }, option.allowed ? "Your crew's" : "Your crew's. No voting for yourselves!") : null,
+            option.yours ? el("span", { class: "who" }, "Yours. No voting for yourself!") : option.own ? el("span", { class: "who" }, "Your crew's") : null,
           ),
-          picked ? el("span", { class: "stamp vote" + (once("vote" + view.round) ? " in" : "") }, "YOUR VOTE") : null,
+          option.picked ? el("span", { class: "stamp vote" + (once("vote" + view.round + "-" + option.index) ? " in" : "") }, "YOUR VOTE") : null,
         );
       }),
     ),
-    el("p", { class: "hint" }, waiting),
+    el("p", { class: "hint", id: "votes-left" }, waiting),
   );
 }
 
@@ -401,18 +482,16 @@ function screen(view) {
   // Someone who arrives mid-game picks a crew before anything else.
   if (view.phase === "lobby") return picker(view, view.team === null ? "Pick your crew" : "You're in!");
   if (view.team === null) return picker(view, "Pick a crew to join in");
-  if (view.phase === "write") {
-    if (!view.writing.up) return heckle(view);
-    if (view.writing.answer) return sealed(view);
-    return writeForm(view);
-  }
+  if (view.phase === "generating") return generating(view);
+  if (view.phase === "team") return view.huddle.writeOpen && !view.huddle.mine ? writeForm(view) : huddle(view);
   if (view.phase === "vote") return vote(view);
   if (view.phase === "result") return result(view);
   return end(view);
 }
 
 game.onView(function (view) {
-  var key = view.phase === "write" && view.team !== null && view.writing.up && !view.writing.answer ? "write:" + view.round : null;
+  var h = view.huddle;
+  var key = view.phase === "team" && h && h.writeOpen && !h.mine ? "write:" + view.round : null;
   if (key && live && live.key === key) {
     live.update(view);
     var bar = app.querySelector(".top");

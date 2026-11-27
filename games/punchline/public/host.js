@@ -72,28 +72,21 @@ function scorePills(view) {
   );
 }
 
-function names(teams) {
-  return list(
-    teams.map(function (team) {
-      return team.name;
-    }),
-  );
-}
-
 // ---------- lobby ----------
 
-function answeringText(config) {
-  var n = config.answering === "all" || config.answering >= config.teams ? "all" : config.answering;
-  return n === "all" ? "All crews answer" : n + " crews answer";
-}
+/** What the host has typed as the AI theme but not sent yet, so a redraw does not eat it. */
+var themeDraft = null;
 
 function settingsMenu(key, options, current) {
   return el(
     "div",
     { class: "menu", role: "menu" },
     options.map(function (option) {
-      var change = {};
-      change[key] = option.value;
+      var change = option.change;
+      if (!change) {
+        change = {};
+        change[key] = option.value;
+      }
       return el(
         "button",
         {
@@ -111,8 +104,8 @@ function settingsMenu(key, options, current) {
   );
 }
 
-/** A setting shown as a pill; tapping it opens a menu of choices above it. */
-function settingPill(key, text, options, current) {
+/** A setting shown as a pill; tapping it opens a menu of choices (or `panel`, any content) above it. */
+function settingPill(key, text, options, current, panel) {
   return el(
     "div",
     { class: "setting" },
@@ -129,7 +122,58 @@ function settingPill(key, text, options, current) {
       },
       text,
     ),
-    openMenu === key ? settingsMenu(key, options, current) : null,
+    openMenu === key ? panel || settingsMenu(key, options, current) : null,
+  );
+}
+
+/** The AI writer's two knobs: what the show is about, and how spicy, from Unc to NSFW. */
+function aiControls(view) {
+  var config = view.config;
+  var levels = view.aiLevels;
+  var theme = el("input", {
+    id: "ai-theme",
+    type: "text",
+    maxLength: 200,
+    placeholder: "Anything: the office party, camping, the 90s…",
+    value: themeDraft === null ? config.aiTheme : themeDraft,
+    oninput: function () {
+      themeDraft = theme.value;
+    },
+    // Sent when the host is done typing, not on every key.
+    onchange: function () {
+      game.send("configure", { aiTheme: theme.value });
+    },
+  });
+  var name = el("b", { id: "ai-level-name" }, levels[config.aiLevel]);
+  var slider = el("input", {
+    id: "ai-level",
+    type: "range",
+    min: 0,
+    max: levels.length - 1,
+    step: 1,
+    value: config.aiLevel,
+    "aria-label": "How spicy",
+    oninput: function () {
+      name.textContent = levels[slider.value];
+    },
+    onchange: function () {
+      game.send("configure", { aiLevel: Number(slider.value) });
+    },
+  });
+  return el(
+    "div",
+    { class: "ai-controls" },
+    el("label", { class: "label", for: "ai-theme" }, "Theme (optional)"),
+    theme,
+    el("label", { class: "label", for: "ai-level" }, "Spice: ", name),
+    slider,
+    el(
+      "div",
+      { class: "ticks" },
+      levels.map(function (level, i) {
+        return el("span", { class: i === config.aiLevel ? "on" : "" }, level);
+      }),
+    ),
   );
 }
 
@@ -139,7 +183,8 @@ function settingsPanel(view, groups) {
   var pack = view.packs.filter(function (entry) {
     return entry.id === config.pack;
   })[0];
-  var summary = config.teams + " crews · " + config.rounds + " rounds" + (pack ? " · " + pack.name : "");
+  var questions = view.usesAi ? "✨ AI" : pack ? pack.name : "";
+  var summary = config.teams + " crews · " + config.rounds + " rounds" + (questions ? " · " + questions : "");
   return el(
     "div",
     { class: "setting" },
@@ -161,7 +206,12 @@ function settingsPanel(view, groups) {
           "div",
           { class: "menu panel", role: "menu" },
           groups.map(function (group) {
-            return el("div", { class: "group" }, el("span", { class: "label" }, group.label), settingsMenu(group.key, group.options, group.current));
+            return el(
+              "div",
+              { class: "group" },
+              group.label ? el("span", { class: "label" }, group.label) : null,
+              group.node || settingsMenu(group.key, group.options, group.current),
+            );
           }),
         )
       : null,
@@ -173,15 +223,16 @@ function settings(view, compact) {
   var pack = view.packs.filter(function (entry) {
     return entry.id === config.pack;
   })[0];
-  var answering = config.answering !== "all" && config.answering >= config.teams ? "all" : config.answering;
-  var answeringOptions = [];
-  for (var n = 2; n < config.teams; n++) answeringOptions.push({ value: n, text: n + " crews" });
-  answeringOptions.push({ value: "all", text: "All crews" });
   var crewOptions = [];
-  for (var c = 2; c <= 8; c++) crewOptions.push({ value: c, text: c + " crews" });
+  for (var c = 2; c <= 6; c++) crewOptions.push({ value: c, text: c + " crews" });
+  // Every pack, then the AI writer when the server has a key for it.
   var packOptions = view.packs.map(function (entry) {
-    return { value: entry.id, text: entry.name + " (" + entry.count + ")", title: entry.description };
+    return { value: entry.id, text: entry.name + " (" + entry.count + ")", title: entry.description, change: { pack: entry.id, source: "pack" } };
   });
+  if (view.aiAvailable) {
+    packOptions.push({ value: "ai", text: "✨ AI", title: "Prompts written for this show from your theme", change: { source: "ai" } });
+  }
+  var questions = view.usesAi ? "ai" : config.pack;
   var roundOptions = [3, 5, 8, 10].map(function (r) {
     return { value: r, text: r + " rounds" };
   });
@@ -189,37 +240,31 @@ function settings(view, compact) {
     return el(
       "div",
       { class: "settings compact" },
-      settingsPanel(view, [
-        { label: "Crews", key: "teams", options: crewOptions, current: config.teams },
-        { label: "Answering each round", key: "answering", options: answeringOptions, current: answering },
-        { label: "Rounds", key: "rounds", options: roundOptions, current: config.rounds },
-        { label: "Questions", key: "pack", options: packOptions, current: config.pack },
-      ]),
+      settingsPanel(
+        view,
+        [
+          { label: "Crews", key: "teams", options: crewOptions, current: config.teams },
+          { label: "Rounds", key: "rounds", options: roundOptions, current: config.rounds },
+          { label: "Questions", key: "pack", options: packOptions, current: questions },
+        ].concat(view.usesAi ? [{ node: aiControls(view) }] : []),
+      ),
     );
   }
   return el(
     "div",
     { class: "settings" },
     settingPill("teams", config.teams + " crews", crewOptions, config.teams),
-    settingPill(
-      "rounds",
-      config.rounds + " rounds",
-      [3, 5, 8, 10].map(function (r) {
-        return { value: r, text: r + " rounds" };
-      }),
-      config.rounds,
-    ),
-    view.packs.length
+    settingPill("rounds", config.rounds + " rounds", roundOptions, config.rounds),
+    packOptions.length ? settingPill("pack", view.usesAi ? "✨ AI prompts" : (pack ? pack.name : "Pick a") + " pack", packOptions, questions) : null,
+    view.usesAi
       ? settingPill(
-          "pack",
-          (pack ? pack.name : "Pick a") + " pack",
-          view.packs.map(function (entry) {
-            return { value: entry.id, text: entry.name + " (" + entry.count + ")", title: entry.description };
-          }),
-          config.pack,
+          "ai",
+          view.aiLevels[config.aiLevel] + (config.aiTheme ? " · " + (config.aiTheme.length > 18 ? config.aiTheme.slice(0, 17) + "…" : config.aiTheme) : " · any theme"),
+          null,
+          null,
+          el("div", { class: "menu panel ai", role: "group" }, aiControls(view)),
         )
       : null,
-    settingPill("answering", answeringText(config), answeringOptions, answering),
   );
 }
 
@@ -254,6 +299,7 @@ function lobbyLine(view) {
   var empty = view.teams.filter(function (team) {
     return team.members.length === 0;
   });
+  if (view.aiError) return "My joke writer choked. " + view.aiError;
   if (view.players === 0) return "Grab your phone and join the party! The code's up there in lights.";
   if (empty.length) {
     return verb(
@@ -464,7 +510,8 @@ function dots() {
   return el("span", { class: "dots" }, el("i", {}), el("i", {}), el("i", {}));
 }
 
-function writerCard(team, compact) {
+/** One crew's progress through the crew stage. Never what anyone wrote. */
+function writerCard(team, compact, writeOpen) {
   var typing = team.members.filter(function (m) {
     return m.typing === "typing";
   });
@@ -481,6 +528,11 @@ function writerCard(team, compact) {
       }),
     );
   if (presence.length > 2) presence = [presence[0], "+" + (presence.length - 1) + " more scribbling"];
+  var votes = plural(team.teamVotes, "crew vote");
+  var state;
+  if (team.submitted) state = el("span", { class: "state" }, team.writers > 1 ? "All locked. Picking a favourite." : "Answer sealed. Smug.");
+  else if (writeOpen) state = el("span", { class: "state" }, "Scribbling", dots());
+  else state = el("span", { class: "state" }, team.locked ? "Picking a favourite" : "Nothing locked. Stage fright.");
   return el(
     "div",
     { class: "writer " + crewClass(team.index) + (team.submitted ? " done" : "") + (compact ? " compact" : ""), "data-team": team.index },
@@ -489,13 +541,11 @@ function writerCard(team, compact) {
       "div",
       { class: "text" },
       el("span", { class: "name" }, team.name),
-      team.submitted
-        ? el("span", { class: "state" }, "Answer sealed. Smug.")
-        : el("span", { class: "state" }, "Scribbling", dots()),
+      state,
       el(
         "span",
-        { class: "sub" },
-        team.submitted ? "Sent by " + team.sentBy : presence.length ? presence.join(" · ") : "Waiting for inspiration",
+        { class: "sub", "data-progress": team.locked + "/" + team.writers },
+        team.locked + " of " + team.writers + " locked" + (team.teamVotes ? " · " + votes : presence.length ? " · " + presence.join(" · ") : ""),
       ),
     ),
     team.submitted ? el("span", { class: "stamp locked" }, "LOCKED IN") : null,
@@ -503,33 +553,23 @@ function writerCard(team, compact) {
 }
 
 function write(view) {
-  var up = view.teams.filter(function (team) {
-    return team.answering;
-  });
-  var judges = view.teams.filter(function (team) {
-    return !team.answering;
-  });
-  var done = up.filter(function (team) {
-    return team.submitted;
-  }).length;
-  var line = judges.length
-    ? fill(pick(QUIPS.writeJudges, "w" + view.round), { judges: names(judges) })
-    : pick(QUIPS.writeEveryone, "w" + view.round);
+  var n = view.teams.length;
+  var line = pick(view.writeOpen ? QUIPS.write : QUIPS.crewVote, "w" + view.round);
   return el(
     "div",
     { class: "screen write" },
-    el("div", { class: "top" }, roundPill(view), scorePills(view), ring(view, -4)),
+    el("div", { class: "top" }, roundPill(view, view.writeOpen ? " · WRITE!" : " · CREW VOTE!"), scorePills(view), ring(view, -4)),
     el(
       "div",
-      { class: "prompt-card sticker" + (up.length > 3 ? " short" : "") },
+      { class: "prompt-card sticker" + (n > 3 ? " short" : "") },
       el("span", { class: "tag" }, "THE PROMPT"),
       el("p", { "data-fit": "28" }, view.prompt),
     ),
     el(
       "div",
-      { class: "writers n" + up.length },
-      up.map(function (team) {
-        return writerCard(team, up.length > 3);
+      { class: "writers n" + n },
+      view.teams.map(function (team) {
+        return writerCard(team, n > 3, view.writeOpen);
       }),
     ),
     el(
@@ -539,9 +579,35 @@ function write(view) {
       el(
         "div",
         { class: "skip" },
-        el("span", { id: "progress" }, done + " of " + up.length + " answers in"),
-        el("button", { id: "next", class: "ghost dim", onclick: send("next") }, "Skip to voting"),
+        el("span", { id: "progress" }, view.lockedIn + " of " + view.writers + " answers locked"),
+        el("button", { id: "next", class: "ghost dim", onclick: send("next") }, "Skip to the vote"),
       ),
+    ),
+  );
+}
+
+/** The AI is writing this show's prompts. */
+function generating(view) {
+  var config = view.config;
+  return el(
+    "div",
+    { class: "screen generating" },
+    el("div", { class: "top" }, marquee(false), roomCode(view, false)),
+    el(
+      "div",
+      { class: "writing-room" },
+      el("h1", { id: "generating" }, "Writing your prompts", dots()),
+      el(
+        "p",
+        { class: "brief" },
+        plural(config.rounds, "prompt") + " · " + view.aiLevels[config.aiLevel] + (config.aiTheme ? " · “" + config.aiTheme + "”" : ""),
+      ),
+    ),
+    el(
+      "div",
+      { class: "bottom" },
+      emcee(pick(QUIPS.generating, view.code + config.aiTheme), { signed: true, id: "rimshot" }),
+      el("button", { id: "cancel", class: "ghost dim", onclick: send("lobby") }, "Cancel"),
     ),
   );
 }
@@ -580,7 +646,7 @@ function votesIn(view) {
   return el(
     "div",
     { class: "votes-in" + (many ? " many" : "") },
-    el("span", { class: "count", id: "progress" }, view.votesIn + " of " + view.voters + " votes in"),
+    el("span", { class: "count", id: "progress" }, view.votesIn + " of " + view.voters + " judges done"),
     many ? el("div", { class: "meter" }, el("i", { style: "width:" + ((view.votesIn / Math.max(1, view.voters)) * 100).toFixed(1) + "%" })) : null,
     el(
       "ul",
@@ -599,12 +665,7 @@ function votesIn(view) {
 }
 
 function vote(view) {
-  var judges = view.teams.filter(function (team) {
-    return !team.answering;
-  });
-  var line = view.openVote
-    ? pick(QUIPS.voteOpen, "v" + view.round)
-    : fill(pick(QUIPS.vote, "v" + view.round), { judges: judges.length ? names(judges) : "Everyone" });
+  var line = pick(view.votesEach > 1 ? QUIPS.voteTwo : QUIPS.vote, "v" + view.round);
   return el(
     "div",
     { class: "screen vote" },
@@ -874,7 +935,7 @@ var HECKLE_COLOURS = { "HA!": "#FFD23F", OOF: "#FF9EC7", WOW: "#7FB2FF", "*clap*
 var MAX_HECKLES_ON_SCREEN = 8;
 
 game.on("heckle", function (h) {
-  if (!lastView || lastView.phase !== "write") return;
+  if (!lastView || lastView.phase !== "team") return;
   var live = fx.querySelectorAll(".heckle");
   if (live.length >= MAX_HECKLES_ON_SCREEN) live[0].remove();
   // Float up from either side of the stage, clear of the prompt in the middle.
@@ -899,18 +960,29 @@ game.on("heckle", function (h) {
 
 // ---------- render ----------
 
-var SCREENS = { lobby: lobby, write: write, vote: vote, result: result, end: end };
+var SCREENS = { lobby: lobby, generating: generating, team: write, vote: vote, result: result, end: end };
 
 function render(view) {
   lastView = view;
   if (view.phase !== "lobby") openMenu = null;
-  if (view.phase !== "write") {
+  if (view.phase !== "team") {
     fx.querySelectorAll(".heckle").forEach(function (node) {
       node.remove();
     });
   }
+  if (view.phase !== "lobby") themeDraft = null;
+  // Redrawing must not pull the theme box out from under the host's fingers.
+  var typing = document.activeElement && document.activeElement.id === "ai-theme" ? document.activeElement : null;
+  var caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   mount(app, SCREENS[view.phase](view));
   if (view.phase === "lobby") startLanes(app);
+  if (typing) {
+    var box = document.getElementById("ai-theme");
+    if (box) {
+      box.focus();
+      box.setSelectionRange(caret[0], caret[1]);
+    }
+  }
 }
 
 // Close an open settings menu by clicking anywhere else.
