@@ -141,7 +141,7 @@ function settingsMenu(key, options, current) {
 }
 
 /** A setting shown as a pill; tapping it opens a menu of choices (or `panel`, any content) above it. */
-function settingPill(key, text, options, current, panel) {
+function settingPill(key, text, options, current, panel, title) {
   return el(
     "div",
     { class: "setting" },
@@ -150,6 +150,7 @@ function settingPill(key, text, options, current, panel) {
       {
         class: "pill" + (openMenu === key ? " open" : ""),
         "data-menu": key,
+        title: title || null,
         "aria-expanded": openMenu === key ? "true" : "false",
         onclick: function () {
           openMenu = openMenu === key ? null : key;
@@ -180,6 +181,13 @@ function aiControls(view) {
       game.send("configure", { aiTheme: theme.value });
     },
   });
+  return el("div", { class: "ai-controls" }, el("label", { class: "label", for: "ai-theme" }, "Theme (optional)"), theme, spiceControls(view));
+}
+
+/** How spicy the AI writes, from Unc to NSFW: a label, a slider and its ticks. */
+function spiceControls(view) {
+  var config = view.config;
+  var levels = view.aiLevels;
   var name = el("b", { id: "ai-level-name" }, levels[config.aiLevel]);
   var slider = el("input", {
     id: "ai-level",
@@ -196,11 +204,7 @@ function aiControls(view) {
       game.send("configure", { aiLevel: Number(slider.value) });
     },
   });
-  return el(
-    "div",
-    { class: "ai-controls" },
-    el("label", { class: "label", for: "ai-theme" }, "Theme (optional)"),
-    theme,
+  return [
     el("label", { class: "label", for: "ai-level" }, "Spice: ", name),
     slider,
     el(
@@ -210,6 +214,49 @@ function aiControls(view) {
         return el("span", { class: i === config.aiLevel ? "on" : "" }, level);
       }),
     ),
+  ];
+}
+
+/** How many of `rounds` the AI writes at `mix` percent. The same sum as aiRounds in game.ts. */
+function aiShare(rounds, mix) {
+  return mix <= 0 ? 0 : Math.min(rounds, Math.max(1, Math.round((rounds * mix) / 100)));
+}
+
+function mixText(rounds, mix) {
+  return mix <= 0 ? "off · every prompt is the pack's own" : aiShare(rounds, mix) + " of " + plural(rounds, "round") + " written by AI";
+}
+
+/**
+ * AI-enhance a pack: what share of the show the AI writes in the pack's style,
+ * and how spicy it writes.
+ */
+function enhanceControls(view) {
+  var config = view.config;
+  var percent = el("b", { id: "ai-mix-name" }, config.aiMix + "%");
+  var detail = el("span", { id: "ai-mix-detail" }, " · " + mixText(config.rounds, config.aiMix));
+  var slider = el("input", {
+    id: "ai-mix",
+    type: "range",
+    min: 0,
+    max: 100,
+    step: 10,
+    value: config.aiMix,
+    "aria-label": "How much of the show the AI writes",
+    oninput: function () {
+      percent.textContent = slider.value + "%";
+      detail.textContent = " · " + mixText(config.rounds, Number(slider.value));
+    },
+    onchange: function () {
+      game.send("configure", { aiMix: Number(slider.value) });
+    },
+  });
+  return el(
+    "div",
+    { class: "ai-controls" },
+    el("label", { class: "label", for: "ai-mix" }, "AI share: ", percent, detail),
+    slider,
+    el("div", { class: "ticks" }, el("span", {}, "All real"), el("span", {}, "Half"), el("span", {}, "All AI")),
+    spiceControls(view),
   );
 }
 
@@ -219,7 +266,7 @@ function settingsPanel(view, groups) {
   var pack = view.packs.filter(function (entry) {
     return entry.id === config.pack;
   })[0];
-  var questions = view.usesAi ? "✨ AI" : pack ? pack.name : "";
+  var questions = view.usesAi ? "✨ AI" : pack ? pack.name + (view.aiRounds ? " + ✨ " + config.aiMix + "% AI" : "") : "";
   var summary = config.teams + " crews · " + config.rounds + " rounds" + (questions ? " · " + questions : "");
   return el(
     "div",
@@ -269,6 +316,8 @@ function settings(view, compact) {
     packOptions.push({ value: "ai", text: "✨ AI", title: "Prompts written for this show from your theme", change: { source: "ai" } });
   }
   var questions = view.usesAi ? "ai" : config.pack;
+  // A pack can have some of its rounds written by the AI, in the pack's style.
+  var canEnhance = view.aiAvailable && !view.usesAi && !!pack;
   var roundOptions = [3, 5, 8, 10].map(function (r) {
     return { value: r, text: r + " rounds" };
   });
@@ -282,7 +331,7 @@ function settings(view, compact) {
           { label: "Crews", key: "teams", options: crewOptions, current: config.teams },
           { label: "Rounds", key: "rounds", options: roundOptions, current: config.rounds },
           { label: "Questions", key: "pack", options: packOptions, current: questions },
-        ].concat(view.usesAi ? [{ node: aiControls(view) }] : []),
+        ].concat(view.usesAi ? [{ node: aiControls(view) }] : canEnhance ? [{ label: "✨ AI enhance", node: enhanceControls(view) }] : []),
       ),
     );
   }
@@ -299,6 +348,16 @@ function settings(view, compact) {
           null,
           null,
           el("div", { class: "menu panel ai", role: "group" }, aiControls(view)),
+        )
+      : null,
+    canEnhance
+      ? settingPill(
+          "enhance",
+          view.aiRounds ? "✨ " + config.aiMix + "% AI · " + view.aiLevels[config.aiLevel] : "✨ Enhance",
+          null,
+          null,
+          el("div", { class: "menu panel ai", role: "group" }, enhanceControls(view)),
+          "Have AI write some of this pack's rounds, in its style",
         )
       : null,
   );
@@ -654,6 +713,13 @@ function write(view) {
   );
 }
 
+function packName(view) {
+  var pack = view.packs.filter(function (entry) {
+    return entry.id === view.config.pack;
+  })[0];
+  return pack ? pack.name : "";
+}
+
 /** The AI is writing this show's prompts. */
 function generating(view) {
   var config = view.config;
@@ -668,7 +734,9 @@ function generating(view) {
       el(
         "p",
         { class: "brief" },
-        plural(config.rounds, "prompt") + " · " + view.aiLevels[config.aiLevel] + (config.aiTheme ? " · “" + config.aiTheme + "”" : ""),
+        view.aiRounds
+          ? plural(view.aiRounds, "new prompt") + " for the " + packName(view) + " pack · " + view.aiLevels[config.aiLevel]
+          : plural(config.rounds, "prompt") + " · " + view.aiLevels[config.aiLevel] + (config.aiTheme ? " · “" + config.aiTheme + "”" : ""),
       ),
     ),
     el(

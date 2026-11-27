@@ -1,6 +1,7 @@
-// Writes a show's prompts with Claude, from the host's theme and a spice level.
+// Writes a show's prompts with Claude: a whole show from the host's theme and a
+// spice level, or a share of one in the style of the pack it is joining.
 //
-// Only loaded when the host picks AI prompts, and only offered when the hub
+// Only loaded when the host picks or mixes in AI prompts, and only offered when the hub
 // passes ANTHROPIC_API_KEY through (see "env" in game.json).
 import Anthropic, { type ClientOptions } from "@anthropic-ai/sdk";
 import type { PromptRequest } from "./game.ts";
@@ -65,14 +66,28 @@ export interface GeneratorOptions {
 /** A failure worth showing the host as it is. */
 export class PromptError extends Error {}
 
-function userMessage({ theme, level, count, avoid }: PromptRequest): string {
+/** The pack the new prompts are joining: what it is about and how its own prompts read. */
+function packBrief(pack: NonNullable<PromptRequest["pack"]>): string {
+  return [
+    "These prompts are joining an existing question pack, and will be shuffled in among its own for tonight's show. Write more of the same: the pack's subject, its voice, the shapes of its prompts, and the people, places and running jokes it keeps coming back to. A player should not be able to tell which prompts are new. Do not repeat or lightly reword any of the pack's own.",
+    `<pack name=${JSON.stringify(pack.name)}>`,
+    ...(pack.description.trim() ? [pack.description.trim()] : []),
+    ...pack.examples.map((prompt) => `- ${prompt}`),
+    "</pack>",
+    "The spice level above still applies to what you write, even where the pack's own prompts are tamer or wilder.",
+  ].join("\n");
+}
+
+function userMessage({ theme, level, count, avoid, pack }: PromptRequest): string {
   const spice = LEVELS[level] ?? LEVELS[1];
   const parts = [
     `Write ${count + SPARES} prompts.`,
     `Spice level: ${spice.name}. ${spice.rubric}`,
-    theme.trim()
-      ? `Theme, as typed by the host:\n<theme>\n${theme.trim()}\n</theme>`
-      : "No theme: write for a general party crowd.",
+    pack
+      ? packBrief(pack)
+      : theme.trim()
+        ? `Theme, as typed by the host:\n<theme>\n${theme.trim()}\n</theme>`
+        : "No theme: write for a general party crowd.",
   ];
   if (avoid.length > 0) {
     parts.push(
@@ -165,7 +180,7 @@ export async function generatePrompts(request: PromptRequest, options: Generator
   } catch {
     throw new PromptError("The AI writer sent back something unreadable. Try again.");
   }
-  const prompts = cleanPrompts(parsed, request.avoid);
+  const prompts = cleanPrompts(parsed, [...request.avoid, ...(request.pack?.examples ?? [])]);
   if (prompts.length < request.count) {
     throw new PromptError(
       `The AI writer only came up with ${prompts.length} usable prompts for ${request.count} rounds. Try again, or a broader theme.`,

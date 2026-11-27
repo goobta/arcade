@@ -6,6 +6,7 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import type { Game, Player } from "@arcade/sdk";
 import {
   CREWS,
+  aiRounds,
   parsePack,
   THEMES,
   HECKLES_PER_SECOND,
@@ -670,6 +671,91 @@ test("AI prompts: a failure returns to the lobby with the reason, and a cancelle
   assert.equal(p.hostView().prompt, prompt);
   assert.match(prompt, /^Prompt \d+$/);
   assert.equal(p.syncs(), 1);
+});
+
+test("AI enhance: a share of a pack's rounds is written by the AI in the pack's style, and shuffled in with its own", async () => {
+  assert.deepEqual([0, 10, 50, 90, 100].map((mix) => aiRounds(5, mix)), [0, 1, 3, 5, 5]);
+  assert.deepEqual([10, 30, 50].map((mix) => aiRounds(10, mix)), [1, 3, 5]);
+
+  const without = party(2);
+  without.host("configure", { aiMix: 50 });
+  assert.equal(without.g.state.config.aiMix, 0, "no key, no enhancing");
+
+  const requests: PromptRequest[] = [];
+  const p = party(2, {
+    aiAvailable: true,
+    generate: async (request) => {
+      requests.push(request);
+      return Array.from({ length: request.count }, (_, i) => `New roast ${requests.length}.${i + 1}`);
+    },
+  });
+  assert.equal(p.g.state.config.aiMix, 0);
+  assert.equal(p.hostView().aiRounds, 0);
+  for (const bad of [-10, 101, "50", NaN]) p.host("configure", { aiMix: bad });
+  assert.equal(p.g.state.config.aiMix, 0);
+
+  p.host("configure", { pack: "party", aiMix: 40, aiLevel: 2, aiTheme: "ignored here" });
+  assert.equal(p.hostView().aiRounds, 2);
+  // The pack keeps its look and its seat: it is still the pack's show.
+  assert.equal(p.hostView().theme, "raju60");
+  assert.deepEqual(p.hostView().vip, { title: "Birthday Boy", votes: 3, holder: null });
+  assert.equal(p.hostView().usesAi, false);
+  seat(p, [0, 1]);
+
+  p.host("start");
+  assert.equal(p.g.state.phase, "generating");
+  await settle();
+  assert.equal(p.g.state.phase, "team");
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].count, 2);
+  assert.equal(requests[0].level, 2);
+  assert.equal(requests[0].theme, "", "the pack is the theme");
+  assert.equal(requests[0].pack?.name, "Raju's 60th");
+  assert.deepEqual(requests[0].pack?.examples, PACKS[1].prompts);
+  const show = p.g.state.prompts;
+  assert.equal(show.length, 5);
+  assert.equal(show.filter((prompt) => /^New roast 1\.[12]$/.test(prompt)).length, 2);
+  assert.equal(show.filter((prompt) => /^Roast \d+$/.test(prompt)).length, 3);
+  assert.equal(new Set(show).size, 5);
+
+  // Encore: everything just played, the AI's and the pack's, is passed along to avoid.
+  for (let i = 0; i < 10; i++) p.host("next");
+  assert.equal(p.g.state.phase, "end");
+  p.host("start");
+  await settle();
+  assert.deepEqual([...requests[1].avoid].sort(), [...show].sort());
+  assert.equal(p.g.state.prompts.filter((prompt) => show.includes(prompt)).length, 0);
+
+  // All AI is still the pack's show; none is a plain pack show, with no waiting.
+  for (let i = 0; i < 10; i++) p.host("next");
+  p.host("lobby");
+  p.host("configure", { aiMix: 100 });
+  p.host("start");
+  await settle();
+  assert.equal(requests[2].count, 5);
+  assert.ok(p.g.state.prompts.every((prompt) => /^New roast 3\./.test(prompt)));
+  assert.equal(p.hostView().theme, "raju60");
+  for (let i = 0; i < 10; i++) p.host("next");
+  p.host("lobby");
+  p.host("configure", { aiMix: 0 });
+  p.host("start");
+  assert.equal(p.g.state.phase, "team");
+  assert.equal(requests.length, 3);
+
+  // With AI prompts as the source there is no pack to enhance.
+  const q = party(2, { aiAvailable: true, generate: async (request) => Array.from({ length: request.count }, (_, i) => `P${i}`) });
+  q.host("configure", { aiMix: 50, source: "ai" });
+  assert.equal(q.hostView().aiRounds, 0);
+});
+
+test("AI enhance: a failure returns to the lobby with the reason", async () => {
+  const p = party(2, { aiAvailable: true, generate: async () => Promise.reject(new Error("Could not reach the AI writer.")) });
+  seat(p, [0, 1]);
+  p.host("configure", { aiMix: 50 });
+  p.host("start");
+  await settle();
+  assert.equal(p.g.state.phase, "lobby");
+  assert.match(p.hostView().aiError, /Could not reach/);
 });
 
 // ---------- the guest of honour ----------

@@ -150,6 +150,17 @@ export const AI_LEVELS = ["Unc", "Clean", "Cheeky", "Spicy", "NSFW"];
 export const MAX_THEME = 200;
 /** How many already-played prompts the AI is told to steer clear of. */
 const AVOID_MAX = 60;
+/** How many of a pack's own prompts the AI is shown when it adds to that pack. */
+const EXAMPLES_MAX = 80;
+
+/**
+ * How many of a show's rounds the AI writes when it enhances a pack: `mix`
+ * percent of them, and never none while the mix is above zero.
+ */
+export function aiRounds(rounds: number, mix: number): number {
+  if (mix <= 0) return 0;
+  return Math.min(rounds, Math.max(1, Math.round((rounds * mix) / 100)));
+}
 
 export interface PromptRequest {
   /** What the host typed; empty means a general party. Untrusted text. */
@@ -159,6 +170,8 @@ export interface PromptRequest {
   count: number;
   /** Prompts already played, not to be repeated. */
   avoid: string[];
+  /** Set when the prompts are joining a pack's own: write more like these, and none of these. */
+  pack?: { name: string; description: string; examples: string[] };
 }
 
 export interface Options {
@@ -176,6 +189,8 @@ interface Config {
   source: "pack" | "ai";
   aiTheme: string;
   aiLevel: number;
+  /** AI-enhance a pack: the percentage of rounds, 0 to 100, the AI writes in the pack's style. 0 is off. */
+  aiMix: number;
 }
 
 /** What a writer's phone last said about them: typing now, or paused with a draft. */
@@ -558,7 +573,7 @@ function joinAddress(code: string, publicUrl: string | undefined): string {
 export function initialState(packs: Pack[]): State {
   return {
     phase: "lobby",
-    config: { teams: 2, rounds: 5, pack: packs[0]?.id ?? "", source: "pack", aiTheme: "", aiLevel: 1 },
+    config: { teams: 2, rounds: 5, pack: packs[0]?.id ?? "", source: "pack", aiTheme: "", aiLevel: 1, aiMix: 0 },
     theme: packs[0]?.theme ?? null,
     vip: packs[0]?.vip ?? null,
     vipId: null,
@@ -600,6 +615,10 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
   const generate = options.generate ?? (async (request: PromptRequest) => (await import("./ai.ts")).generatePrompts(request));
 
   const usesAi = (g: Game<State>): boolean => aiAvailable && g.state.config.source === "ai";
+  const chosenPack = (g: Game<State>): Pack | undefined => packs.find((entry) => entry.id === g.state.config.pack);
+  /** A pack show with some of its rounds written by the AI, in the pack's style. */
+  const enhances = (g: Game<State>): boolean =>
+    aiAvailable && g.state.config.source === "pack" && g.state.config.aiMix > 0 && chosenPack(g) !== undefined;
 
   /** Why the game cannot start yet, or null when it can. */
   function startProblem(g: Game<State>): string | null {
@@ -609,18 +628,29 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
     return null;
   }
 
-  /** Ask Claude for this show's prompts; the curtain goes up when they arrive. */
+  /**
+   * Ask Claude for this show's prompts; the curtain goes up when they arrive.
+   * On an enhanced pack it writes only its share of the rounds, and the pack's
+   * own prompts, picked now, are shuffled in with them.
+   */
   function writePrompts(g: Game<State>): void {
     const id = ++g.state.generation;
-    const { aiTheme, aiLevel, rounds } = g.state.config;
+    const { aiTheme, aiLevel, aiMix, rounds } = g.state.config;
+    const pack = enhances(g) ? chosenPack(g) : undefined;
+    const real = pack ? pickPrompts(g, packs).slice(0, rounds - aiRounds(rounds, aiMix)) : [];
+    // A pack too small for its share leaves the AI the rest.
+    const count = rounds - real.length;
+    const request: PromptRequest = { theme: pack ? "" : aiTheme, level: aiLevel, count, avoid: g.state.used.slice(-AVOID_MAX) };
+    if (pack) request.pack = { name: pack.name, description: pack.description, examples: pack.prompts.slice(0, EXAMPLES_MAX) };
     g.state.phase = "generating";
     const current = () => g.state.generation === id && g.state.phase === "generating";
     Promise.resolve()
-      .then(() => generate({ theme: aiTheme, level: aiLevel, count: rounds, avoid: g.state.used.slice(-AVOID_MAX) }))
+      .then(() => generate(request))
       .then(
         (prompts) => {
           if (!current()) return;
-          raiseCurtain(g, prompts.slice(0, rounds));
+          const written = prompts.slice(0, count);
+          raiseCurtain(g, pack ? shuffle([...real, ...written]) : written);
           g.sync();
         },
         (error: unknown) => {
@@ -638,11 +668,11 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
     init: () => initialState(packs),
 
     onHost: {
-      /** Change any of the lobby settings: { teams?, rounds?, pack?, source?, aiTheme?, aiLevel? }. */
+      /** Change any of the lobby settings: { teams?, rounds?, pack?, source?, aiTheme?, aiLevel?, aiMix? }. */
       configure(g, data) {
         if (g.state.phase !== "lobby" || !data || typeof data !== "object") return;
         const config = g.state.config;
-        const { teams, rounds, pack: packId, source, aiTheme, aiLevel } = data as Record<string, unknown>;
+        const { teams, rounds, pack: packId, source, aiTheme, aiLevel, aiMix } = data as Record<string, unknown>;
         if (Number.isInteger(teams) && (teams as number) >= MIN_CREWS && (teams as number) <= MAX_CREWS) {
           config.teams = teams as number;
           // Players on a crew that no longer exists pick again.
@@ -657,6 +687,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         if (Number.isInteger(aiLevel) && (aiLevel as number) >= 0 && (aiLevel as number) < AI_LEVELS.length) {
           config.aiLevel = aiLevel as number;
         }
+        if (aiAvailable && typeof aiMix === "number" && aiMix >= 0 && aiMix <= 100) config.aiMix = Math.round(aiMix);
         const chosen = usesAi(g) ? undefined : packs.find((entry) => entry.id === config.pack);
         g.state.theme = chosen?.theme ?? null;
         // Whoever holds the seat keeps it if the host comes back to a pack that has one.
@@ -689,7 +720,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         // Anyone still dithering when the curtain goes up joins the smallest crew.
         placeStragglers(g);
         g.state.aiError = null;
-        if (usesAi(g)) writePrompts(g);
+        if (usesAi(g) || enhances(g)) writePrompts(g);
         else raiseCurtain(g, pickPrompts(g, packs));
       },
 
@@ -855,6 +886,8 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         aiLevels: AI_LEVELS,
         aiError: g.state.aiError,
         usesAi: usesAi(g),
+        // An enhanced pack: how many of the show's rounds the AI writes. 0 when it is off.
+        aiRounds: enhances(g) ? aiRounds(config.rounds, config.aiMix) : 0,
         players: g.players.length,
         teams: teamIndexes(g).map((team) => {
           const crew = members(g, team);
