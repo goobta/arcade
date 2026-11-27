@@ -27,7 +27,7 @@ function topBar(view) {
     return el(
       "div",
       { class: "top" },
-      el("span", { class: "logo" }, "PUNCHLINE"),
+      el("span", { class: "logo" }, say("title", "PUNCHLINE")),
       el("span", { class: "me" }, "You're " + view.name),
     );
   }
@@ -75,7 +75,7 @@ function picker(view, heading) {
   var line =
     view.team === null
       ? fill("Pick a crew, {name}. Snacks are judged harshly here.", { name: view.name })
-      : "Great pick, " + view.name + ". " + CREW_QUIPS[view.team];
+      : "Great pick, " + view.name + ". " + crewQuip(view.team);
   return el(
     "div",
     { class: "picker" },
@@ -109,7 +109,7 @@ function picker(view, heading) {
     el(
       "p",
       { class: "hint" },
-      view.phase === "lobby" ? "Tap another crew any time before the show starts." : "You'll join in straight away.",
+      view.phase === "lobby" ? say("pickHint", "Tap another crew any time before the show starts.") : "You'll join in straight away.",
     ),
     emcee(line, { cls: "phone" }),
   );
@@ -127,7 +127,7 @@ function presence(h) {
   return h.teammates.map(function (m) {
     if (m.typing === "typing") return el("span", { class: "who typing" }, m.name + " is typing", dots());
     if (m.typing === "idea") return el("span", { class: "who idea" }, m.name + " has an idea");
-    return el("span", { class: "who idle" }, m.name + " " + pick(QUIPS.idle, m.name));
+    return el("span", { class: "who idle" }, m.name + " " + pick(quips("idle"), m.name));
   });
 }
 
@@ -222,7 +222,7 @@ function writeForm(view) {
     id: "answer",
     maxLength: h.max,
     rows: 3,
-    placeholder: "Make it sting",
+    placeholder: say("placeholder", "Make it sting"),
     value: draft.text,
     oninput: function () {
       draft.text = box.value;
@@ -280,7 +280,7 @@ function heckleButtons(h) {
             if (now < heckleReadyAt) return;
             heckleReadyAt = now + h.heckleGap;
             game.send("heckle", kind);
-            var pop = el("span", { class: "pop", style: "left:" + (button.offsetLeft + button.offsetWidth / 2 - 30) + "px; top:" + (button.offsetTop - 10) + "px" }, kind);
+            var pop = el("span", { class: "pop", style: "left:" + (button.offsetLeft + button.offsetWidth / 2 - 30) + "px; top:" + (button.offsetTop - 10) + "px" }, heckleLabel(kind));
             pop.addEventListener("animationend", function () {
               pop.remove();
             });
@@ -291,7 +291,7 @@ function heckleButtons(h) {
             }, h.heckleGap);
           },
         },
-        kind,
+        heckleLabel(kind),
       );
       return button;
     }),
@@ -424,7 +424,7 @@ function result(view) {
   return el(
     "div",
     { class: "result-screen" },
-    r.won ? el("span", { class: "stamp zing" + (once("zing" + view.round) ? " in" : "") }, "ZING!") : null,
+    r.won ? el("span", { class: "stamp zing" + (once("zing" + view.round) ? " in" : "") }, say("zing", "ZING!")) : null,
     r.won
       ? mascot(view.team, 110, "cheer", "hop")
       : cricket
@@ -455,8 +455,8 @@ function end(view) {
       : "Your crew placed " + e.place + " of " + view.teams.length;
   var mine = [];
   var a = e.awards || {};
-  if (a.zinger && a.zinger.by === view.name) mine.push(["BIGGEST ZINGER", "“" + a.zinger.text + "”"]);
-  if (a.crickets && a.crickets.name === view.name) mine.push(["THE CRICKETS AWARD", "Zero votes. Iconic."]);
+  if (a.zinger && a.zinger.by === view.name) mine.push([say("zingerAward", "BIGGEST ZINGER"), "“" + a.zinger.text + "”"]);
+  if (a.crickets && a.crickets.name === view.name) mine.push([say("cricketsAward", "THE CRICKETS AWARD"), "Zero votes. Iconic."]);
   if (a.heckler && a.heckler.name === view.name) mine.push(["LOUDEST HECKLER", plural(a.heckler.count, "heckle") + ". Legend."]);
   if (e.won && once("confetti-end")) confetti(fx, 20, 900);
   return center(
@@ -490,6 +490,7 @@ function screen(view) {
 }
 
 game.onView(function (view) {
+  setLook(view.theme);
   var h = view.huddle;
   var key = view.phase === "team" && h && h.writeOpen && !h.mine ? "write:" + view.round : null;
   if (key && live && live.key === key) {

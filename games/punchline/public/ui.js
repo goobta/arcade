@@ -171,7 +171,8 @@ function eyes(f, kind) {
  * (writing), "sulk" (lost).
  */
 function mascot(team, size, mood, cls) {
-  var m = MASCOTS[team % MASCOTS.length];
+  var set = (look() && look().mascots) || MASCOTS;
+  var m = set[team % set.length];
   var f = m.face;
   var face;
   if (mood === "cheer") {
@@ -226,7 +227,7 @@ var RIMSHOT =
 /** Rimshot and a speech bubble. `signed` adds the "RIMSHOT · YOUR EMCEE" credit. */
 function emcee(line, opts) {
   opts = opts || {};
-  var bot = art(RIMSHOT);
+  var bot = art((look() && look().rimshot) || RIMSHOT);
   bot.classList.add("bob");
   return el(
     "div",
@@ -236,7 +237,7 @@ function emcee(line, opts) {
       "div",
       { class: "bubble", id: opts.id || null },
       el("p", {}, line),
-      opts.signed ? el("p", { class: "credit" }, "RIMSHOT · YOUR EMCEE") : null,
+      opts.signed ? el("p", { class: "credit" }, say("credit", "RIMSHOT · YOUR EMCEE")) : null,
     ),
   );
 }
@@ -315,13 +316,14 @@ var CONFETTI = ["#FFD23F", "#FF4F9A", "#3D8BFF", "#4CC36B", "#FF5A4E", "#FFF6E3"
 
 /** Drops a burst of confetti into `layer`, which should be a fixed, full-size overlay. */
 function confetti(layer, count, height) {
+  var colours = (look() && look().confetti) || CONFETTI;
   for (var i = 0; i < count; i++) {
     var piece = el("span", {
       class: "confetto",
       style:
         "left:" + (Math.random() * 100).toFixed(1) + "%;" +
         "width:" + (8 + (i % 3) * 6) + "px;" +
-        "background:" + CONFETTI[i % CONFETTI.length] + ";" +
+        "background:" + colours[i % colours.length] + ";" +
         "--fall:" + (height || 760) + "px;" +
         "--spin:" + (360 + Math.random() * 360).toFixed(0) + "deg;" +
         "animation-duration:" + (3 + Math.random() * 2.6).toFixed(2) + "s;" +
@@ -370,3 +372,261 @@ function showStatus(game) {
       status === "replaced" ? "Opened on another device" : status === "closed" ? "Game closed" : "Reconnecting…";
   });
 }
+
+// ---------- looks ----------
+//
+// A question pack can dress the whole show: its "theme" arrives as view.theme
+// and names an entry here. A look swaps the mascots, the emcee, some copy and
+// (through body[data-look] in style.css) the colours. With no look, or one
+// this page does not know, everything above is used as it is.
+
+var currentLook = null;
+
+/** Call with view.theme on every view. Returns true when the look changed. */
+function setLook(name) {
+  var next = name && Object.prototype.hasOwnProperty.call(LOOKS, name) ? name : null;
+  if (next === currentLook) return false;
+  currentLook = next;
+  if (next) document.body.setAttribute("data-look", next);
+  else document.body.removeAttribute("data-look");
+  return true;
+}
+
+function look() {
+  return currentLook ? LOOKS[currentLook] : null;
+}
+
+/** A piece of copy: the look's wording for `key` if it has one, else `fallback`. */
+function say(key, fallback) {
+  var l = look();
+  return l && l.text[key] !== undefined ? l.text[key] : fallback;
+}
+
+/** Rimshot's lines for a moment, in the current look. */
+function quips(key) {
+  var l = look();
+  return (l && l.quips[key]) || QUIPS[key];
+}
+
+function crewQuip(team) {
+  var l = look();
+  return ((l && l.crewQuips) || CREW_QUIPS)[team];
+}
+
+/** What a heckle is called on screen. The server always hears the plain kind. */
+function heckleLabel(kind) {
+  var l = look();
+  return (l && l.heckles[kind]) || kind;
+}
+
+/** A decoration from the current look ("troupe", "dancerLeft", ...), or null without one. */
+function lookArt(name, cls) {
+  var l = look();
+  if (!l || !l.art[name]) return null;
+  var node = art(l.art[name]);
+  if (cls) node.classList.add.apply(node.classList, cls.split(" "));
+  return node;
+}
+
+// Raju's 60th: a wedding-tent night. Indian sweets for crews, Rimshot in a
+// turban, dancers in saris and a pair of tablas.
+var RJ_INK = "#2A0E24";
+var RJ_S = 'stroke="' + RJ_INK + '" stroke-width="5"';
+
+/** A dancer in a sari. `up` raises both arms; `flip` faces her the other way. */
+function rjDancer(c, up, flip) {
+  var arm = function (d) {
+    return (
+      '<path d="' + d + '" fill="none" stroke="' + RJ_INK + '" stroke-width="15" ' + R + "/>" +
+      '<path d="' + d + '" fill="none" stroke="' + c.skin + '" stroke-width="7" ' + R + "/>"
+    );
+  };
+  var bun = up ? 'cx="60" cy="14" r="9"' : 'cx="38" cy="24" r="10"';
+  var body =
+    arm("M72 66 Q98 58 92 26") +
+    '<path d="M87 42 L98 40 M88 48 L99 47" fill="none" stroke="' + c.bangle + '" stroke-width="3"/>' +
+    (up
+      ? arm("M48 66 Q24 56 28 26") + '<path d="M22 40 L33 42 M21 47 L32 48" fill="none" stroke="' + c.bangle + '" stroke-width="3"/>'
+      : arm("M48 66 Q22 82 42 98")) +
+    '<path d="M44 88 C36 120 24 150 18 184 Q60 197 102 184 C96 150 84 120 76 88 Z" fill="' + c.sari + '" ' + RJ_S + ' stroke-linejoin="round"/>' +
+    '<path d="M22 170 Q60 183 98 170" fill="none" stroke="' + c.border + '" stroke-width="8"/>' +
+    '<path d="M60 98 L58 166 M50 102 L42 162 M70 102 L78 162" fill="none" stroke="' + c.pleat + '" stroke-width="3" ' + R + "/>" +
+    '<path d="M46 60 H74 L77 90 H43 Z" fill="' + c.blouse + '" ' + RJ_S + ' stroke-linejoin="round"/>' +
+    '<path d="M79 93 L46 58 L35 63 Q24 92 31 125 L44 119 Q40 96 47 80 L66 99 Z" fill="' + c.pallu + '" ' + RJ_S + ' stroke-linejoin="round"/>' +
+    "<circle " + bun + ' fill="' + RJ_INK + '"/>' +
+    "<circle " + bun + ' fill="none" stroke="' + c.flowers + '" stroke-width="4" stroke-dasharray="0.1 7" ' + R + "/>" +
+    '<circle cx="60" cy="38" r="21" fill="' + c.skin + '" ' + RJ_S + "/>" +
+    '<path d="M38 38 Q40 14 60 15 Q80 14 82 38 Q72 24 60 26 Q48 24 38 38 Z" fill="' + RJ_INK + '"/>' +
+    '<circle cx="60" cy="32" r="3" fill="#E0153F"/>' +
+    '<path d="M47 42 Q51 37 55 42 M65 42 Q69 37 73 42' + (up ? "" : " M52 48 Q60 56 68 48") + '" fill="none" stroke="' + RJ_INK + '" stroke-width="3" ' + R + "/>" +
+    (up ? '<path d="M51 47 Q60 60 69 47 Z" fill="' + RJ_INK + '" stroke="' + RJ_INK + '" stroke-width="2" stroke-linejoin="round"/>' : "") +
+    '<circle cx="39" cy="47" r="4" fill="#FFB01F" stroke="' + RJ_INK + '" stroke-width="2"/>' +
+    '<circle cx="81" cy="47" r="4" fill="#FFB01F" stroke="' + RJ_INK + '" stroke-width="2"/>';
+  return (
+    '<svg class="dancer" viewBox="0 0 120 200" aria-hidden="true">' +
+    (flip ? '<g transform="translate(120 0) scale(-1 1)">' + body + "</g>" : body) +
+    "</svg>"
+  );
+}
+
+var RJ_TEAL = { skin: "#C98A5A", sari: "#12B5A6", pleat: "#0B7F7A", pallu: "#7FE5DA", blouse: "#E0157A", border: "#FFB01F", bangle: "#FFB01F", flowers: "#FFF3D6" };
+var RJ_SAFFRON = { skin: "#A86B3F", sari: "#FF7A1A", pleat: "#C9540A", pallu: "#FFC27A", blouse: "#7B2FBE", border: "#E0157A", bangle: "#12B5A6", flowers: "#FFB01F" };
+
+var RJ_TABLA =
+  '<svg class="tabla" viewBox="0 0 200 124" aria-hidden="true">' +
+  '<ellipse cx="55" cy="110" rx="36" ry="9" fill="#E0157A" stroke="' + RJ_INK + '" stroke-width="4"/>' +
+  '<path d="M12 50 Q8 106 55 110 Q102 106 98 50 Z" fill="#D9853B" ' + RJ_S + ' stroke-linejoin="round"/>' +
+  '<path d="M22 60 L40 106 M40 64 L55 108 M70 64 L55 108 M88 60 L70 106" fill="none" stroke="#FFF3D6" stroke-width="3" ' + R + "/>" +
+  '<ellipse cx="55" cy="48" rx="43" ry="15" fill="#FFF3D6" ' + RJ_S + "/>" +
+  '<ellipse cx="63" cy="48" rx="16" ry="6" fill="' + RJ_INK + '"/>' +
+  '<ellipse cx="150" cy="110" rx="27" ry="8" fill="#12B5A6" stroke="' + RJ_INK + '" stroke-width="4"/>' +
+  '<path d="M121 40 Q114 104 150 110 Q186 104 179 40 Z" fill="#8A4B2A" ' + RJ_S + ' stroke-linejoin="round"/>' +
+  '<path d="M128 50 L140 106 M143 54 L150 108 M157 54 L150 108 M172 50 L160 106" fill="none" stroke="#FFF3D6" stroke-width="3" ' + R + "/>" +
+  '<ellipse cx="150" cy="38" rx="29" ry="11" fill="#FFF3D6" ' + RJ_S + "/>" +
+  '<ellipse cx="150" cy="38" rx="12" ry="4.5" fill="' + RJ_INK + '"/>' +
+  '<path d="M104 22 L110 8 M114 26 L124 14 M96 26 L92 12" fill="none" stroke="#FFB01F" stroke-width="4" ' + R + "/></svg>";
+
+/** The tent's scalloped edge with marigold garlands, for the 1280px projector stage. */
+var RJ_CANOPY = (function () {
+  var swags = "M0 18";
+  for (var x = 0; x < 1280; x += 160) swags += " Q" + (x + 80) + " 54 " + (x + 160) + " 18";
+  return (
+    '<svg class="canopy" viewBox="0 0 1280 46" width="1280" height="46" aria-hidden="true">' +
+    '<defs><pattern id="rj-scallop" width="80" height="26" patternUnits="userSpaceOnUse">' +
+    '<path d="M0 -4 H40 V4 A20 18 0 0 1 0 4 Z" fill="#FFB01F" stroke="' + RJ_INK + '" stroke-width="3"/>' +
+    '<path d="M40 -4 H80 V4 A20 18 0 0 1 40 4 Z" fill="#12B5A6" stroke="' + RJ_INK + '" stroke-width="3"/>' +
+    '</pattern></defs><rect width="1280" height="26" fill="url(#rj-scallop)"/>' +
+    '<path d="' + swags + '" fill="none" stroke="#FF7A1A" stroke-width="10" ' + R + ' stroke-dasharray="0.1 12"/>' +
+    '<path d="' + swags + '" fill="none" stroke="#FFC533" stroke-width="10" ' + R + ' stroke-dasharray="0.1 12" stroke-dashoffset="6"/></svg>'
+  );
+})();
+
+var LOOKS = {
+  raju60: {
+    mascots: [
+      {
+        // Gulab jamun, in its bowl
+        body:
+          '<ellipse cx="50" cy="44" rx="35" ry="32" fill="#FF5A4E" ' + RJ_S + "/>" +
+          '<path d="M27 32 Q32 20 44 17" fill="none" stroke="#FFF3D6" stroke-width="4" ' + R + "/>" +
+          '<path d="M10 68 H90 Q86 96 50 96 Q14 96 10 68 Z" fill="#FFF3D6" ' + RJ_S + ' stroke-linejoin="round"/>' +
+          '<path d="M18 80 Q50 91 82 80" fill="none" stroke="#12B5A6" stroke-width="4" ' + R + "/>",
+        face: { cx: 50, ey: 40, dx: 10, my: 52 },
+        rest: '<path d="M41 50 Q50 59 59 50" fill="none" ' + RJ_S + " " + R + "/>",
+      },
+      {
+        // Kulfi on a stick
+        body:
+          '<rect x="44" y="66" width="12" height="30" rx="5" fill="#E8C48A" ' + RJ_S + "/>" +
+          '<path d="M32 16 Q50 0 68 16 L76 68 Q50 80 24 68 Z" fill="#3D8BFF" ' + RJ_S + ' stroke-linejoin="round"/>' +
+          '<path d="M36 24 Q40 16 48 13" fill="none" stroke="#FFF3D6" stroke-width="4" ' + R + "/>",
+        face: { cx: 50, ey: 40, dx: 9, my: 54 },
+        rest: '<path d="M41 52 Q50 62 59 52" fill="none" ' + RJ_S + " " + R + "/>",
+      },
+      {
+        // Ladoo, with a sliver of pista
+        body:
+          '<circle cx="50" cy="57" r="37" fill="#FFD23F" ' + RJ_S + "/>" +
+          '<circle cx="27" cy="46" r="3" fill="#D99A00"/><circle cx="73" cy="44" r="3" fill="#D99A00"/>' +
+          '<circle cx="23" cy="66" r="3" fill="#D99A00"/><circle cx="77" cy="67" r="3" fill="#D99A00"/>' +
+          '<circle cx="39" cy="85" r="3" fill="#D99A00"/><circle cx="63" cy="86" r="3" fill="#D99A00"/>' +
+          '<path d="M39 21 Q50 8 61 21 Q50 28 39 21 Z" fill="#4CC36B" stroke="' + RJ_INK + '" stroke-width="4" stroke-linejoin="round"/>',
+        face: { cx: 50, ey: 54, dx: 12, my: 70 },
+        rest: '<circle cx="50" cy="70" r="6" fill="' + RJ_INK + '"/>',
+      },
+      {
+        // Pista barfi, cut in a diamond
+        body:
+          '<path d="M50 8 L92 52 L50 96 L8 52 Z" fill="#4CC36B" ' + RJ_S + ' stroke-linejoin="round"/>' +
+          '<path d="M48 22 L26 45" fill="none" stroke="#FFF3D6" stroke-width="4" ' + R + "/>" +
+          '<circle cx="68" cy="38" r="3" fill="#2A8A45"/><circle cx="34" cy="74" r="3" fill="#2A8A45"/><circle cx="64" cy="78" r="3" fill="#2A8A45"/>',
+        face: { cx: 50, ey: 52, dx: 10, my: 65 },
+        rest: '<path d="M41 63 Q50 72 59 63" fill="none" ' + RJ_S + " " + R + "/>",
+      },
+      {
+        // Falooda, in a tall glass
+        body:
+          '<rect x="33" y="88" width="34" height="8" rx="4" fill="#FFF3D6" stroke="' + RJ_INK + '" stroke-width="4"/>' +
+          '<path d="M64 6 L55 30" fill="none" stroke="' + RJ_INK + '" stroke-width="9" ' + R + "/>" +
+          '<path d="M64 6 L55 30" fill="none" stroke="#12B5A6" stroke-width="4" ' + R + "/>" +
+          '<circle cx="46" cy="24" r="15" fill="#FFB8D9" ' + RJ_S + "/>" +
+          '<path d="M26 30 H74 L65 90 H35 Z" fill="#A77BFF" ' + RJ_S + ' stroke-linejoin="round"/>',
+        face: { cx: 50, ey: 54, dx: 8, my: 68 },
+        rest: '<path d="M42 66 Q50 74 58 66" fill="none" ' + RJ_S + " " + R + "/>",
+      },
+      {
+        // Jalebi
+        body:
+          '<circle cx="50" cy="52" r="40" fill="#FF9F43" ' + RJ_S + "/>" +
+          '<path d="M50 30 C66 28 76 40 75 55 C74 72 58 80 44 78 C28 75 22 60 27 46" fill="none" stroke="#C9540A" stroke-width="5" ' + R + "/>",
+        face: { cx: 50, ey: 50, dx: 11, my: 64 },
+        rest: '<path d="M42 62 Q50 70 58 62" fill="none" ' + RJ_S + " " + R + "/>",
+      },
+    ],
+    rimshot:
+      '<svg class="rimshot" viewBox="0 -10 124 170" aria-hidden="true">' +
+      '<rect x="47" y="86" width="26" height="62" rx="11" fill="#0B7F7A" ' + RJ_S + "/>" +
+      '<rect x="36" y="80" width="48" height="14" rx="7" fill="#FFB01F" ' + RJ_S + "/>" +
+      '<circle cx="60" cy="46" r="40" fill="#F6E7C8" ' + RJ_S + "/>" +
+      '<ellipse cx="46" cy="46" rx="5" ry="7" fill="' + RJ_INK + '"/><ellipse cx="74" cy="46" rx="5" ry="7" fill="' + RJ_INK + '"/>' +
+      '<circle cx="30" cy="58" r="6" fill="#FF9EC7"/><circle cx="90" cy="58" r="6" fill="#FF9EC7"/>' +
+      '<path d="M52 70 Q60 80 68 70 Z" fill="' + RJ_INK + '" stroke="' + RJ_INK + '" stroke-width="4" stroke-linejoin="round"/>' +
+      '<path d="M60 62 C54 55 43 55 34 64 C39 61 44 63 46 66 C52 70 58 68 60 64 C62 68 68 70 74 66 C76 63 81 61 86 64 C77 55 66 55 60 62 Z" fill="' + RJ_INK + '" stroke="' + RJ_INK + '" stroke-width="2" stroke-linejoin="round"/>' +
+      '<path d="M98 30 Q114 42 106 62 L97 56 Q101 44 92 36 Z" fill="#FF7A1A" stroke="' + RJ_INK + '" stroke-width="4" stroke-linejoin="round"/>' +
+      '<path d="M19 36 C14 6 42 -7 62 -6 C86 -6 106 8 101 36 C80 22 40 22 19 36 Z" fill="#FF7A1A" ' + RJ_S + ' stroke-linejoin="round"/>' +
+      '<path d="M28 22 Q60 2 94 20 M40 9 Q62 -2 84 7" fill="none" stroke="#C9540A" stroke-width="4" ' + R + "/>" +
+      '<circle cx="60" cy="14" r="6" fill="#12B5A6" stroke="' + RJ_INK + '" stroke-width="3"/>' +
+      '<path d="M60 116 L44 106 L44 126 Z M60 116 L76 106 L76 126 Z" fill="#E0157A" stroke="' + RJ_INK + '" stroke-width="4" stroke-linejoin="round"/>' +
+      '<circle cx="60" cy="116" r="5" fill="' + RJ_INK + '"/></svg>',
+    art: {
+      canopy: RJ_CANOPY,
+      troupe: '<div class="troupe">' + rjDancer(RJ_TEAL, false, false) + RJ_TABLA + rjDancer(RJ_SAFFRON, false, true) + "</div>",
+      dancerLeft: rjDancer(RJ_TEAL, false, false),
+      dancerRight: rjDancer(RJ_SAFFRON, false, true),
+      cheer: '<div class="troupe cheer">' + rjDancer(RJ_TEAL, true, false) + RJ_TABLA + rjDancer(RJ_SAFFRON, true, true) + "</div>",
+    },
+    confetti: ["#FF7A1A", "#FFC533", "#FF7A1A", "#FFC533", "#12B5A6", "#E0157A", "#FFF3D6"],
+    text: {
+      title: "RAJU'S 60TH",
+      tagline: "A Punchline birthday special",
+      credit: "RIMSHOT JI · YOUR EMCEE",
+      start: "Chalo, let's go!",
+      zing: "WAH WAH!",
+      encore: "Once more!",
+      finalKicker: "FINAL BOWS · HAPPY 60TH, RAJU UNCLE!",
+      billing: ["Stars of the sangeet", "Still get cake", "On dishes duty"],
+      zingerAward: "BIGGEST WAH-WAH",
+      cricketsAward: "THE PIN-DROP AWARD",
+      crickets: "Arre yaar. Pin-drop silence.",
+      placeholder: "Make uncle proud",
+      lobbyEmpty: "Arre, phones out! The code's up there. Join before the cake is cut.",
+      lobbyChoosing: "Pick your mithai! Anyone still dithering when we start joins the smallest crew.",
+      lobbyReady: ["Crews are set. Chai is poured. Hit the big button when you're ready.", "Everyone's here. Raju Uncle, brace yourself."],
+      pickHint: "Tap another sweet any time before the show starts.",
+    },
+    quips: {
+      write: [
+        "No pressure, beta. Raju Uncle is only judging you silently.",
+        "Write like the whole family is watching. Because they are.",
+        "Lock yours in, then back a teammate's. Chalo, chalo!",
+      ],
+      crewVote: ["Pens down! Five seconds to back your crew's best line.", "Bas, writing's closed. Pick a teammate's answer, jaldi!"],
+      vote: [
+        "Vote with your heart, not your family WhatsApp group.",
+        "Votes are secret. Aunty's face is not.",
+        "Any answer but the one you wrote. Yes, your crew's counts.",
+      ],
+      voteTwo: ["Two votes each, two different answers. Spend them wisely, beta.", "You get two picks. Not on the same answer, and not on your own."],
+      idle: ["is still on a second samosa", "is thinking very hard", "is pretending to think", "is asking what the question was", "is waiting for chai"],
+    },
+    crewQuips: [
+      "Gulab Jamuns: soft, sweet, and soaked in confidence.",
+      "Kulfis stay cool under pressure.",
+      "Ladoos: round, golden, impossible to stop at one.",
+      "Barfis. Sharp corners, sharper jokes.",
+      "Faloodas have layers. So many layers.",
+      "Jalebis: twisted, in the best way.",
+    ],
+    heckles: { "HA!": "HAHA!", OOF: "ARRE!", WOW: "WAH!", "*clap*": "*taali*", BOO: "CHEE!", zzz: "zzz" },
+  },
+};

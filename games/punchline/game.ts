@@ -24,13 +24,23 @@ export interface Pack {
   id: string;
   name: string;
   description: string;
+  /** A look the clients know how to dress the show in (a key of THEMES), or null for the usual stage. */
+  theme: string | null;
   prompts: string[];
 }
+
+/**
+ * Looks a pack can ask for with "theme": "...". The clients hold the art and
+ * copy under the same key; the server only needs the crew names.
+ */
+export const THEMES: Record<string, { crews: string[] }> = {
+  raju60: { crews: ["Gulab Jamuns", "Kulfis", "Ladoos", "Barfis", "Faloodas", "Jalebis"] },
+};
 
 const PACK_DIR = path.join(import.meta.dirname, "questions");
 const MAX_PROMPT = 200;
 
-/** One pack file: { "name": "...", "description": "...", "prompts": ["...", { "text": "..." }] } */
+/** One pack file: { "name": "...", "description": "...", "theme": "...", "prompts": ["...", { "text": "..." }] } */
 export function parsePack(id: string, raw: unknown): Pack {
   if (!raw || typeof raw !== "object") throw new Error("must be a JSON object");
   const file = raw as Record<string, unknown>;
@@ -48,6 +58,8 @@ export function parsePack(id: string, raw: unknown): Pack {
     id,
     name: typeof file.name === "string" && file.name.trim() ? file.name.trim().slice(0, 40) : id,
     description: typeof file.description === "string" ? file.description.trim().slice(0, 120) : "",
+    // An unknown theme is dropped, so the pack still plays on the usual stage.
+    theme: typeof file.theme === "string" && Object.hasOwn(THEMES, file.theme) ? file.theme : null,
     prompts,
   };
 }
@@ -62,7 +74,12 @@ function loadPacks(): Pack[] {
   }
   for (const name of files) {
     try {
-      packs.push(parsePack(name.slice(0, -".json".length), JSON.parse(readFileSync(path.join(PACK_DIR, name), "utf8"))));
+      const raw = JSON.parse(readFileSync(path.join(PACK_DIR, name), "utf8"));
+      const pack = parsePack(name.slice(0, -".json".length), raw);
+      if (typeof raw?.theme === "string" && !pack.theme) {
+        console.error(`[punchline] questions/${name}: unknown theme "${raw.theme}", using the usual stage`);
+      }
+      packs.push(pack);
     } catch (error) {
       // A broken pack must not hide the good ones.
       console.error(`[punchline] skipped questions/${name}: ${(error as Error).message}`);
@@ -77,6 +94,11 @@ function loadPacks(): Pack[] {
 export const CREWS = ["Hot Sauce", "Blueberries", "Lemons", "Pickles", "Grapes", "Tangerines"];
 export const MIN_CREWS = 2;
 export const MAX_CREWS = CREWS.length;
+
+/** A crew's name in the show's current look. */
+function crewName(g: Game<State>, team: number): string {
+  return (g.state.theme ? THEMES[g.state.theme]?.crews[team] : undefined) ?? CREWS[team];
+}
 const MAX_ROUNDS = 20;
 export const MAX_ANSWER = 100;
 /** The crew stage: this long to write and lock an answer... */
@@ -142,6 +164,8 @@ interface RoundRecord {
 export interface State {
   phase: "lobby" | "generating" | "team" | "vote" | "result" | "end";
   config: Config;
+  /** The chosen pack's look, or null: the usual stage, and always for AI prompts. */
+  theme: string | null;
   /** Player id -> crew index. Players not in here have not picked a crew yet. */
   teamOf: Record<string, number>;
   scores: number[];
@@ -397,7 +421,7 @@ function advance(g: Game<State>): void {
 
 function standings(g: Game<State>) {
   return teamIndexes(g)
-    .map((team) => ({ team, name: CREWS[team], score: g.state.scores[team] ?? 0 }))
+    .map((team) => ({ team, name: crewName(g, team), score: g.state.scores[team] ?? 0 }))
     .sort((a, b) => b.score - a.score || a.team - b.team);
 }
 
@@ -484,6 +508,7 @@ export function initialState(packs: Pack[]): State {
   return {
     phase: "lobby",
     config: { teams: 2, rounds: 5, pack: packs[0]?.id ?? "", source: "pack", aiTheme: "", aiLevel: 1 },
+    theme: packs[0]?.theme ?? null,
     teamOf: {},
     scores: [],
     prompts: [],
@@ -512,6 +537,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
   const packList = packs.map((entry) => ({
     id: entry.id,
     name: entry.name,
+    theme: entry.theme,
     description: entry.description,
     count: entry.prompts.length,
   }));
@@ -525,7 +551,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
   function startProblem(g: Game<State>): string | null {
     if (!usesAi(g) && !packs.some((entry) => entry.id === g.state.config.pack)) return "No question packs found.";
     const empty = teamIndexes(g).filter((team) => members(g, team).length === 0);
-    if (empty.length > 0) return `Waiting for players on ${empty.map((team) => CREWS[team]).join(", ")}.`;
+    if (empty.length > 0) return `Waiting for players on ${empty.map((team) => crewName(g, team)).join(", ")}.`;
     return null;
   }
 
@@ -577,6 +603,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         if (Number.isInteger(aiLevel) && (aiLevel as number) >= 0 && (aiLevel as number) < AI_LEVELS.length) {
           config.aiLevel = aiLevel as number;
         }
+        g.state.theme = usesAi(g) ? null : (packs.find((entry) => entry.id === config.pack)?.theme ?? null);
         g.state.aiError = null;
       },
 
@@ -719,6 +746,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         round: round + 1,
         total: prompts.length || config.rounds,
         config,
+        theme: g.state.theme,
         packs: packList,
         aiAvailable,
         aiLevels: AI_LEVELS,
@@ -731,7 +759,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
           const lockedIn = writing.filter((p) => p.id in locked).length;
           return {
             index: team,
-            name: CREWS[team],
+            name: crewName(g, team),
             score: g.state.scores[team] ?? 0,
             members: crew.map((p) => ({
               name: p.name,
@@ -769,7 +797,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
             ? teamIndexes(g)
                 .map((team) => ({
                   team,
-                  name: CREWS[team],
+                  name: crewName(g, team),
                   text: answers[team]?.text ?? null,
                   by: answers[team]?.by ?? null,
                   voters: g.players
@@ -800,15 +828,16 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
       return {
         phase,
         name: player.name,
+        theme: g.state.theme,
         round: round + 1,
         total: prompts.length || config.rounds,
         team: team ?? null,
-        teamName: team === undefined ? null : CREWS[team],
+        teamName: team === undefined ? null : crewName(g, team),
         score: team === undefined ? 0 : (g.state.scores[team] ?? 0),
         canSwitch: phase === "lobby",
         teams: teamIndexes(g).map((index) => ({
           index,
-          name: CREWS[index],
+          name: crewName(g, index),
           members: members(g, index).map((p) => p.name),
         })),
         prompt: showsPrompt(phase) ? (prompts[round] ?? null) : null,
@@ -865,8 +894,8 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
           phase === "result"
             ? {
                 won: team !== undefined && winners.includes(team),
-                winners: winners.map((entry) => CREWS[entry]),
-                answers: ballot.map((entry) => ({ name: CREWS[entry], text: answers[entry].text })),
+                winners: winners.map((entry) => crewName(g, entry)),
+                answers: ballot.map((entry) => ({ name: crewName(g, entry), text: answers[entry].text })),
                 // This crew's published answer, if it had one this round.
                 mine:
                   team !== undefined && ownAnswer && ballot.includes(team)
@@ -880,7 +909,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
           phase === "end"
             ? {
                 won: team !== undefined && champions(g).includes(team),
-                champions: champions(g).map((entry) => CREWS[entry]),
+                champions: champions(g).map((entry) => crewName(g, entry)),
                 place: team === undefined ? null : placeOf(g, team),
                 awards: awards(g),
               }
