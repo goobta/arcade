@@ -74,8 +74,8 @@ Phones that have disconnected are not counted or moved.
 
 Big rooms are welcome: up to 100 players (the hub's `ARCADE_MAX_PLAYERS` also
 caps a party, and defaults to 16). With more than four crews or more than 16
-players, the projector lobby swaps the crew cards for scrolling lanes of names,
-with a QR code to join.
+players, the projector lobby swaps the crew cards for scrolling lanes of names.
+Either lobby shows a QR code to join next to the room code.
 
 The fonts (Bagel Fat One and Nunito, plus Baloo 2 for the Raju's 60th
 look, all SIL Open Font License) are served from
