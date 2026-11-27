@@ -493,16 +493,20 @@ var RJ_TABLA =
   '<ellipse cx="150" cy="38" rx="12" ry="4.5" fill="' + RJ_INK + '"/>' +
   '<path d="M104 22 L110 8 M114 26 L124 14 M96 26 L92 12" fill="none" stroke="#FFB01F" stroke-width="4" ' + R + "/></svg>";
 
-/** The tent's scalloped edge with marigold garlands, for the 1280px projector stage. */
+/**
+ * The tent's scalloped edge with marigold garlands, across the top of the
+ * projector stage. Drawn far wider than any stage; the stage clips the rest.
+ */
+var RJ_CANOPY_WIDTH = 5120;
 var RJ_CANOPY = (function () {
   var swags = "M0 18";
-  for (var x = 0; x < 1280; x += 160) swags += " Q" + (x + 80) + " 54 " + (x + 160) + " 18";
+  for (var x = 0; x < RJ_CANOPY_WIDTH; x += 160) swags += " Q" + (x + 80) + " 54 " + (x + 160) + " 18";
   return (
-    '<svg class="canopy" viewBox="0 0 1280 46" width="1280" height="46" aria-hidden="true">' +
+    '<svg class="canopy" viewBox="0 0 ' + RJ_CANOPY_WIDTH + ' 46" width="' + RJ_CANOPY_WIDTH + '" height="46" aria-hidden="true">' +
     '<defs><pattern id="rj-scallop" width="80" height="26" patternUnits="userSpaceOnUse">' +
     '<path d="M0 -4 H40 V4 A20 18 0 0 1 0 4 Z" fill="#FFB01F" stroke="' + RJ_INK + '" stroke-width="3"/>' +
     '<path d="M40 -4 H80 V4 A20 18 0 0 1 40 4 Z" fill="#12B5A6" stroke="' + RJ_INK + '" stroke-width="3"/>' +
-    '</pattern></defs><rect width="1280" height="26" fill="url(#rj-scallop)"/>' +
+    '</pattern></defs><rect width="' + RJ_CANOPY_WIDTH + '" height="26" fill="url(#rj-scallop)"/>' +
     '<path d="' + swags + '" fill="none" stroke="#FF7A1A" stroke-width="10" ' + R + ' stroke-dasharray="0.1 12"/>' +
     '<path d="' + swags + '" fill="none" stroke="#FFC533" stroke-width="10" ' + R + ' stroke-dasharray="0.1 12" stroke-dashoffset="6"/></svg>'
   );
