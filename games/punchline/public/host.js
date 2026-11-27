@@ -311,6 +311,9 @@ function lobbyLine(view) {
     ) + " looking lonely. Somebody adopt them.";
   }
   if (short) return "Watch for your name! " + short.name + " could use reinforcements.";
+  if (view.vip && !view.vip.holder) {
+    return say("vipOpen", "One seat is still empty: the " + view.vip.title + "'s. Take it on your phone, and your votes count ×" + view.vip.votes + ".");
+  }
   if (view.unassigned.length) {
     return say("lobbyChoosing", "Grab your phone and pick a crew! Anyone still dithering when the curtain goes up joins the smallest crew.");
   }
@@ -339,6 +342,31 @@ function lobbyActions(view, small) {
 
 var TILTS = [-3, 2, -1, 3, -2, 1];
 
+function memberClass(m) {
+  return (m.connected ? "" : "away") + (m.vip ? " vip" : "");
+}
+
+/**
+ * The guest-of-honour seat in the lobby: who is in it and where they sit, or
+ * that it is still free. Clicking a taken seat empties it.
+ */
+function vipPill(view) {
+  var v = view.vip;
+  if (!v) return null;
+  var h = v.holder;
+  if (!h) {
+    return el("span", { class: "pill vip-pill free", id: "vip" }, art(VIP_CROWN), v.title + ": seat open · votes ×" + v.votes);
+  }
+  var where = h.team === null ? "watching" : view.teams[h.team].name;
+  return el(
+    "button",
+    { class: "pill vip-pill" + (h.connected ? "" : " away"), id: "vip", title: "Empty the seat", onclick: send("unseat") },
+    art(VIP_CROWN),
+    v.title + ": " + h.name + " · " + where + " · votes ×" + v.votes,
+    el("span", { class: "x" }, "✕"),
+  );
+}
+
 function crewCard(team) {
   return el(
     "div",
@@ -351,7 +379,7 @@ function crewCard(team) {
           "ul",
           { class: "members" },
           team.members.map(function (m, i) {
-            return el("li", { class: m.connected ? "" : "away", style: "--tilt:" + TILTS[i % TILTS.length] + "deg" }, m.name);
+            return el("li", { class: memberClass(m), style: "--tilt:" + TILTS[i % TILTS.length] + "deg" }, m.name);
           }),
         )
       : el("p", { class: "empty" }, "Nobody yet. Be the first!"),
@@ -383,6 +411,7 @@ function cardLobby(view) {
         "div",
         { class: "controls" },
         el("div", { class: "row" }, settings(view), el("button", { class: "pill dim", onclick: Arcade.exit }, "Exit")),
+        vipPill(view),
         lobbyActions(view),
       ),
     ),
@@ -392,7 +421,7 @@ function cardLobby(view) {
 /** One ticker lane: the crew's badge, then its members' names scrolling sideways. */
 function lane(team, height, short) {
   var namesList = team.members.map(function (m, i) {
-    return el("li", { class: m.connected ? "" : "away", style: "--tilt:" + TILTS[i % TILTS.length] + "deg" }, m.name);
+    return el("li", { class: memberClass(m), style: "--tilt:" + TILTS[i % TILTS.length] + "deg" }, m.name);
   });
   var copy = namesList.map(function (node) {
     return node.cloneNode(true);
@@ -493,6 +522,7 @@ function tickerLobby(view) {
         "div",
         { class: "controls" },
         el("div", { class: "row" }, settings(view, true), el("button", { class: "pill dim", onclick: Arcade.exit }, "Exit")),
+        vipPill(view),
         lobbyActions(view, true),
       ),
     ),
@@ -637,12 +667,18 @@ function ballotCards(view) {
 function votesIn(view) {
   var list = view.voterList;
   var many = list.length > 8;
+  // The guest of honour is always up there, voted or not; a big room then shows the latest few to finish.
+  var guest = list.filter(function (v) {
+    return v.vip;
+  });
   var shown = many
-    ? list
-        .filter(function (v) {
-          return v.voted;
-        })
-        .slice(-7)
+    ? guest.concat(
+        list
+          .filter(function (v) {
+            return v.voted && !v.vip;
+          })
+          .slice(guest.length - 7),
+      )
     : list;
   var left = list.length - shown.length;
   return el(
@@ -656,9 +692,9 @@ function votesIn(view) {
       shown.map(function (v) {
         return el(
           "li",
-          { class: v.voted ? "" : "waiting" },
-          v.voted ? avatar(v.name, v.team) : el("span", { class: "avatar pending" }, "?"),
-          many ? null : el("span", { class: "name" }, v.name),
+          { class: (v.voted ? "" : "waiting") + (v.vip ? " vip" : "") },
+          v.voted || v.vip ? avatar(v.name, v.team, 0, v.vip) : el("span", { class: "avatar pending" }, "?"),
+          many && !v.vip ? null : el("span", { class: "name" }, v.name),
         );
       }),
       many && left > 0 ? el("li", {}, el("span", { class: "avatar more" }, "+" + left)) : null,
@@ -704,9 +740,10 @@ function headline(view) {
   return verb(winners, "takes", "take") + " the round!";
 }
 
-function resultCard(entry, i, compact, round) {
-  var votes = entry.voters.length;
+function resultCard(entry, i, compact, round, weight) {
+  var votes = entry.votes;
   var showVoters = entry.voters.slice(0, compact ? 3 : 5);
+  var hidden = entry.voters.length - showVoters.length;
   return el(
     "li",
     {
@@ -727,9 +764,14 @@ function resultCard(entry, i, compact, round) {
               "ul",
               { class: "voters" },
               showVoters.map(function (v) {
-                return el("li", {}, avatar(v.name, v.team, compact ? 34 : 44));
+                return el(
+                  "li",
+                  { class: v.vip ? "vip" : "" },
+                  avatar(v.name, v.team, compact ? 34 : 44, v.vip),
+                  v.vip && weight > 1 ? el("span", { class: "times" }, "×" + weight) : null,
+                );
               }),
-              votes > showVoters.length ? el("li", {}, el("span", { class: "avatar more", style: "--size:" + (compact ? 34 : 44) + "px" }, "+" + (votes - showVoters.length))) : null,
+              hidden > 0 ? el("li", {}, el("span", { class: "avatar more", style: "--size:" + (compact ? 34 : 44) + "px" }, "+" + hidden)) : null,
             )
           : el("span", { class: "crickets" }, art(CRICKET), compact ? null : el("em", {}, say("crickets", "*chirp* … *chirp*"))),
         el("span", { class: "votes" }, plural(votes, "vote")),
@@ -785,7 +827,7 @@ function result(view) {
       "ul",
       { class: "results n" + n },
       view.results.map(function (entry, i) {
-        return resultCard(entry, i, n > 3, view.round);
+        return resultCard(entry, i, n > 3, view.round, view.vip ? view.vip.votes : 1);
       }),
     ),
     el(
@@ -953,7 +995,7 @@ game.on("heckle", function (h) {
         "background:" + (HECKLE_COLOURS[h.kind] || "#FFD23F") + "; --tilt:" + (Math.random() * 14 - 7).toFixed(1) + "deg",
     },
     heckleLabel(h.kind),
-    el("small", {}, " — " + h.name),
+    el("small", {}, " — " + (h.vip ? "♛ " : "") + h.name),
   );
   bubble.addEventListener("animationend", function () {
     bubble.remove();

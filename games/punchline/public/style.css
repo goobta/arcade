@@ -200,6 +200,30 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 4px
 .avatar.pending { background: transparent; border: 4px dashed var(--lavender); color: var(--lavender); }
 .avatar.more { background: var(--plum); color: var(--cream); border-color: var(--ink); font-size: calc(var(--size) * 0.32); }
 
+/* The guest of honour: a crown on their avatar, their name and their seat */
+.vip-crown { width: 36px; height: 23px; flex: none; }
+.avatar.vip { position: relative; box-shadow: 0 0 0 4px var(--yellow); }
+/* Watching, without a crew: gold, whatever crew's card the avatar sits on. */
+.avatar.guest { background: var(--yellow); }
+.avatar.vip .vip-crown {
+  position: absolute; left: 50%; top: calc(var(--size) * -0.42);
+  width: calc(var(--size) * 0.7); height: calc(var(--size) * 0.44); transform: translateX(-50%) rotate(-6deg);
+}
+.members li.vip::before, .track li.vip::before { content: "♛ "; color: var(--yellow); }
+.vip-pill { display: inline-flex; align-items: center; gap: 8px; background: var(--yellow); color: var(--ink); border-color: var(--ink); font-size: 15px; padding: 5px 14px; max-width: 100%; white-space: nowrap; }
+.vip-pill .vip-crown { width: 26px; height: 17px; }
+.vip-pill.free { background: transparent; color: var(--yellow); border-style: dashed; border-color: var(--yellow); }
+.vip-pill.away { opacity: 0.6; }
+.vip-pill .x { font-weight: 900; opacity: 0.6; }
+.votes-in li.vip .name { color: var(--yellow); }
+.votes-in li.vip.waiting .avatar { opacity: 0.55; }
+.result .voters li { position: relative; }
+.result .voters .times, .crew-chip .times {
+  background: var(--yellow); color: var(--ink); border: 3px solid var(--ink); border-radius: 999px;
+  font-weight: 900; font-size: 13px; line-height: 1; padding: 2px 5px;
+}
+.result .voters .times { position: absolute; right: -10px; bottom: -8px; }
+
 /* Rimshot and his speech bubble */
 .emcee { display: flex; align-items: flex-end; gap: 14px; }
 .emcee .rimshot { width: 104px; height: 138px; flex: none; }
@@ -681,6 +705,27 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 4px
 .picker .crews.many .who { font-size: 13px; }
 .picker .crews.many .tag { font-size: 11px; padding: 1px 6px; top: -10px; }
 .picker .hint { margin-top: 0; }
+
+/* The guest-of-honour seat, on the phone */
+.vip-seat {
+  position: relative; display: flex; align-items: center; gap: 14px; width: 100%; text-align: left;
+  background: var(--yellow); color: var(--ink); border-radius: 24px; padding: 12px 16px; box-shadow: 6px 6px 0 var(--shadow);
+}
+.vip-seat .vip-crown { width: 54px; height: 34px; }
+.vip-seat .words { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.vip-seat .name { font-family: var(--display); font-weight: 400; font-size: 24px; line-height: 1.05; }
+.vip-seat .who { font-weight: 800; font-size: 14px; }
+.vip-seat .leave { flex: none; background: transparent; border: 3px solid var(--ink); border-radius: 999px; padding: 4px 10px; font-weight: 900; font-size: 13px; color: var(--ink); }
+.vip-taken { display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 800; font-size: 15px; color: var(--yellow); }
+.vip-taken .vip-crown { width: 28px; height: 18px; }
+.crew.watch .vip-crown { width: 70px; height: 44px; }
+.crew.watch.picked { background: var(--yellow); }
+.vip-chip { display: flex; align-items: center; gap: 6px; color: var(--yellow); font-weight: 900; }
+.vip-chip .vip-crown { width: 26px; height: 17px; }
+.picker .crews.many .crew.watch { grid-column: 1 / -1; }
+.spectate h1 { text-align: center; }
+.spectate .muted { text-align: center; }
+.play .center > .vip-crown, .result-screen > .vip-crown { width: 120px; height: 76px; }
 .picker .emcee { margin-top: auto; }
 
 /* Timer bar */

@@ -19,8 +19,8 @@ import {
 } from "../game.ts";
 
 const PACKS: Pack[] = [
-  { id: "test", name: "Test", description: "", theme: null, prompts: Array.from({ length: 20 }, (_, i) => `Prompt ${i + 1}`) },
-  { id: "party", name: "Raju's 60th", description: "", theme: "raju60", prompts: Array.from({ length: 20 }, (_, i) => `Roast ${i + 1}`) },
+  { id: "test", name: "Test", description: "", theme: null, vip: null, prompts: Array.from({ length: 20 }, (_, i) => `Prompt ${i + 1}`) },
+  { id: "party", name: "Raju's 60th", description: "", theme: "raju60", vip: { title: "Birthday Boy", votes: 3 }, prompts: Array.from({ length: 20 }, (_, i) => `Roast ${i + 1}`) },
 ];
 
 interface Seat extends Player {
@@ -133,7 +133,7 @@ test("a pack's theme dresses the show only while that pack is chosen", () => {
 
 test("a pack file may name a theme, and an unknown one is dropped", () => {
   assert.equal(parsePack("a", { prompts: ["x"] }).theme, null);
-  assert.equal(parsePack("a", { theme: "raju60", prompts: ["x"] }).theme, "raju60");
+  assert.equal(parsePack("a", { theme: "raju60", vip: { title: "Birthday Boy", votes: 3 }, prompts: ["x"] }).theme, "raju60");
   assert.equal(parsePack("a", { theme: "disco", prompts: ["x"] }).theme, null);
   assert.equal(parsePack("a", { theme: "constructor", prompts: ["x"] }).theme, null);
 });
@@ -435,7 +435,7 @@ test("heckles come from phones that have locked their answer, and are rate limit
   p.play(2, "heckle", "HA!");
   p.play(2, "heckle", "OOF");
   assert.equal(p.sent.length, 1, "one heckle per phone per second");
-  assert.deepEqual(p.sent[0], { to: "host", type: "heckle", data: { kind: "HA!", name: "Player 2", team: 2 } });
+  assert.deepEqual(p.sent[0], { to: "host", type: "heckle", data: { kind: "HA!", name: "Player 2", team: 2, vip: false } });
 
   mock.timers.tick(1_000);
   p.play(2, "heckle", "OOF");
@@ -670,4 +670,218 @@ test("AI prompts: a failure returns to the lobby with the reason, and a cancelle
   assert.equal(p.hostView().prompt, prompt);
   assert.match(prompt, /^Prompt \d+$/);
   assert.equal(p.syncs(), 1);
+});
+
+// ---------- the guest of honour ----------
+
+/** A show on the pack with a guest-of-honour seat (votes ×3). */
+function gala(count: number, teams = 2) {
+  const p = party(count);
+  p.host("configure", { pack: "party", teams });
+  return p;
+}
+
+/** Everyone on a crew writes "Answer N"; the crew stage then ends, with the earliest lock published. */
+function writeAll(p: Party) {
+  p.players.forEach((player, who) => {
+    if (p.g.state.teamOf[player.id] !== undefined) p.play(who, "answer", `Answer ${who}`);
+  });
+  if (p.g.state.phase === "team") p.host("next");
+}
+
+test("a pack file may offer a guest-of-honour seat", () => {
+  assert.equal(parsePack("a", { prompts: ["x"] }).vip, null);
+  assert.deepEqual(parsePack("a", { vip: true, prompts: ["x"] }).vip, { title: "Guest of Honour", votes: 3 });
+  assert.deepEqual(parsePack("a", { vip: { title: " Birthday Girl ", votes: 5 }, prompts: ["x"] }).vip, { title: "Birthday Girl", votes: 5 });
+  // Nonsense falls back to the defaults rather than breaking the pack.
+  assert.deepEqual(parsePack("a", { vip: { title: 7, votes: 0 }, prompts: ["x"] }).vip, { title: "Guest of Honour", votes: 3 });
+  assert.equal(parsePack("a", { vip: "yes", prompts: ["x"] }).vip, null);
+});
+
+test("guest of honour: one seat, only on a pack that offers it, and the host can empty it", () => {
+  const p = party(3, { aiAvailable: true });
+  assert.equal(p.view(0).vip, null);
+  p.play(0, "vip", true);
+  assert.equal(p.g.state.vipId, null, "no seat on a plain pack");
+
+  p.host("configure", { pack: "party" });
+  assert.deepEqual(p.view(0).vip, { title: "Birthday Boy", votes: 3, mine: false, takenBy: null, canClaim: true, canLeave: false });
+  assert.deepEqual(p.hostView().vip, { title: "Birthday Boy", votes: 3, holder: null });
+  p.play(0, "vip", true);
+  p.play(1, "vip", true);
+  assert.equal(p.g.state.vipId, "p0", "first come, first served");
+  assert.deepEqual([p.view(0).vip.mine, p.view(0).vip.canLeave, p.view(0).voteWeight], [true, true, 3]);
+  assert.deepEqual([p.view(1).vip.takenBy, p.view(1).vip.canClaim, p.view(1).voteWeight], ["Player 0", false, 1]);
+  assert.deepEqual(p.hostView().vip.holder, { name: "Player 0", team: null, connected: true });
+
+  // Watching, they are not "still choosing"; on a crew, they are marked in it.
+  assert.equal(p.view(0).watching, true);
+  assert.deepEqual(p.hostView().unassigned, ["Player 1", "Player 2"]);
+  p.play(0, "join", 1);
+  assert.equal(p.view(0).watching, false);
+  assert.deepEqual(p.hostView().teams[1].members.map((m: any) => m.vip), [true]);
+  assert.equal(p.hostView().vip.holder.team, 1);
+  p.play(1, "watch");
+  assert.equal(p.view(1).team, null);
+  p.play(1, "join", 0);
+  p.play(1, "watch");
+  assert.equal(p.view(1).team, 0, "only the guest of honour can watch");
+  p.play(0, "watch");
+  assert.equal(p.view(0).watching, true);
+
+  // Another pack, or AI prompts, has no seat; coming back finds the same person in it.
+  p.host("configure", { source: "ai" });
+  assert.deepEqual([p.view(0).vip, p.view(0).watching, p.view(0).voteWeight], [null, false, 1]);
+  assert.deepEqual(p.hostView().unassigned, ["Player 0", "Player 2"]);
+  p.host("configure", { source: "pack" });
+  assert.equal(p.view(0).vip.mine, true);
+
+  // Giving the seat back, and the host emptying it.
+  p.play(1, "vip", false);
+  assert.equal(p.g.state.vipId, "p0", "only the holder can give it back");
+  p.play(0, "vip", false);
+  assert.equal(p.g.state.vipId, null);
+  p.play(1, "vip", true);
+  assert.equal(p.view(1).team, 0, "taking the seat keeps your crew");
+  p.host("unseat");
+  assert.deepEqual([p.g.state.vipId, p.view(1).team], [null, 0]);
+});
+
+test("guest of honour: shuffle, balance and the curtain leave them where they chose", () => {
+  const p = gala(7);
+  p.play(0, "vip", true);
+  seat(p, [-1, 0, 0, 0, 0, 0]);
+  p.host("balance");
+  assert.equal(p.view(0).watching, true, "balance does not draft a watching guest");
+  assert.deepEqual(sizes(p), [3, 3]);
+  p.host("shuffle");
+  assert.equal(p.view(0).watching, true);
+  assert.deepEqual(sizes(p), [3, 3]);
+
+  // On a crew, they are the one person balance and shuffle never move.
+  p.play(0, "join", 1);
+  for (let who = 1; who < 6; who++) p.play(who, "join", 1);
+  p.play(6, "join", 0);
+  p.host("balance");
+  assert.equal(p.view(0).team, 1);
+  assert.deepEqual(sizes(p), [3, 4]);
+  p.host("shuffle");
+  assert.equal(p.view(0).team, 1);
+
+  p.play(0, "watch");
+  p.host("start");
+  assert.equal(p.g.state.phase, "team");
+  assert.equal(p.view(0).watching, true, "not placed as a straggler");
+});
+
+test("guest of honour, watching: heckles from the start, votes on every answer, and each vote counts three", () => {
+  const p = gala(5, 3);
+  p.play(0, "vip", true);
+  seat(p, [-1, 0, 0, 1, 2]);
+  p.host("start");
+
+  // Nothing to write, so the heckles are there straight away; nobody waits on them.
+  assert.equal(p.view(0).huddle, null);
+  assert.equal(p.view(0).spectate.heckles.length, 6);
+  assert.equal(p.view(1).spectate, null);
+  p.play(0, "heckle", "HA!");
+  assert.deepEqual(p.sent.at(-1)!.data, { kind: "HA!", name: "Player 0", team: null, vip: true });
+  p.play(0, "answer", "Not mine to write");
+  assert.deepEqual(p.g.state.locked, {});
+  assert.equal(p.hostView().writers, 4);
+  writeAll(p);
+  assert.equal(p.g.state.phase, "vote");
+
+  // They are first on the projector's list of judges before voting and after.
+  assert.equal(p.hostView().voters, 5);
+  assert.deepEqual(p.hostView().voterList[0], { name: "Player 0", team: null, voted: false, vip: true });
+  assert.deepEqual(p.view(0).voting.options.map((o: any) => [o.allowed, o.own, o.yours]), [[true, false, false], [true, false, false], [true, false, false]]);
+  p.play(1, "vote", slot(p, 1));
+  p.play(2, "vote", slot(p, 1));
+  p.play(0, "vote", slot(p, 2));
+  assert.deepEqual(p.hostView().voterList.map((v: any) => [v.name, v.voted]).slice(0, 3), [["Player 0", true], ["Player 1", true], ["Player 2", true]]);
+  p.play(3, "vote", slot(p, 0));
+  p.play(4, "vote", slot(p, 0));
+  assert.equal(p.g.state.phase, "result");
+
+  // Crew 0 and crew 1 drew two voters each; the guest's single vote for crew 2 beats both.
+  assert.deepEqual(p.g.state.winners, [2]);
+  assert.deepEqual(p.g.state.scores, [0, 0, 1]);
+  const results = p.hostView().results;
+  assert.deepEqual(results.map((r: any) => [r.team, r.votes, r.voters.length]), [[2, 3, 1], [0, 2, 2], [1, 2, 2]]);
+  assert.deepEqual(results[0].voters, [{ name: "Player 0", team: null, vip: true }]);
+  // Five judges, seven votes to be had.
+  assert.equal(p.hostView().eligible, 7);
+  assert.deepEqual(p.view(4).result.mine, { text: "Answer 4", by: "Player 4", votes: 3, eligible: 7 });
+  assert.deepEqual([p.view(0).result.won, p.view(0).result.mine, p.view(0).result.place], [false, null, null]);
+
+  while (p.g.state.phase !== "end") p.host("next");
+  assert.deepEqual(p.view(0).end.champions, ["Ladoos"]);
+  assert.equal(p.view(0).end.place, null);
+  assert.equal(p.hostView().awards.zinger.votes, 3);
+});
+
+test("guest of honour, on a crew: writes and backs a teammate at face value, and never votes for their own answer", () => {
+  const p = gala(4);
+  seat(p, [0, 0, 1, 1]);
+  p.play(0, "vip", true);
+  p.host("start");
+  assert.equal(p.view(0).spectate, null);
+  p.play(0, "answer", "From the guest");
+  p.play(1, "answer", "From a teammate");
+  p.play(2, "answer", "Two");
+  p.play(3, "answer", "Three");
+  // In the crew stage the guest's vote is one vote like anybody's.
+  p.play(0, "teamVote", "p1");
+  assert.equal(p.view(1).huddle.answers.find((a: any) => a.id === "p1").votes, 1);
+  p.play(1, "teamVote", "p0");
+  p.play(2, "teamVote", "p3");
+  p.play(3, "teamVote", "p2");
+  assert.equal(p.g.state.phase, "vote");
+  assert.equal(p.g.state.answers[0].byId, "p0");
+
+  p.play(0, "vote", slot(p, 0));
+  assert.deepEqual(p.g.state.votes, {}, "not for the answer they wrote");
+  p.play(0, "vote", slot(p, 1));
+  p.play(1, "vote", slot(p, 0));
+  p.play(2, "vote", slot(p, 0));
+  p.play(3, "vote", slot(p, 0));
+  // Three voters for crew 0, and the guest's three for crew 1: a tie.
+  assert.deepEqual([...p.g.state.winners].sort(), [0, 1]);
+  assert.equal(p.hostView().results.find((r: any) => r.team === 1).voters[0].vip, true);
+});
+
+test("guest of honour: with two votes each, both count three; mid-show only a latecomer can take the seat", () => {
+  const p = gala(5, 4);
+  seat(p, [0, 1, 2, 3]);
+  // Player 4 is still parking the car when the curtain goes up.
+  p.players[4].connected = false;
+  p.host("start");
+  p.players[4].connected = true;
+  p.play(0, "vip", true);
+  assert.equal(p.g.state.vipId, null, "someone already on a crew cannot take the seat once the show is running");
+  assert.equal(p.view(0).vip.canClaim, false);
+  assert.equal(p.view(4).vip.canClaim, true);
+  p.play(4, "vip", true);
+  assert.equal(p.view(4).watching, true);
+  p.play(4, "vip", false);
+  assert.equal(p.g.state.vipId, "p4", "and there is no giving it back mid-show");
+  assert.equal(p.view(4).vip.canLeave, false);
+
+  writeAll(p);
+  assert.equal(p.view(4).voting.limit, 2);
+  p.play(4, "vote", slot(p, 0));
+  p.play(4, "vote", slot(p, 1));
+  p.play(0, "vote", slot(p, 2));
+  p.play(1, "vote", slot(p, 2));
+  p.host("next");
+  assert.deepEqual([...p.g.state.winners].sort(), [0, 1]);
+  assert.deepEqual([0, 1, 2, 3].map((team) => p.hostView().results.find((r: any) => r.team === team).votes), [3, 3, 2, 0]);
+
+  // A guest who goes home mid-show is not waited for.
+  p.host("next");
+  p.leave(4);
+  writeAll(p);
+  assert.equal(p.hostView().voters, 4);
+  assert.equal(p.hostView().voterList.some((v: any) => v.vip), false);
 });

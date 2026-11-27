@@ -26,7 +26,35 @@ export interface Pack {
   description: string;
   /** A look the clients know how to dress the show in (a key of THEMES), or null for the usual stage. */
   theme: string | null;
+  /** The guest of honour's seat, or null for a show without one. */
+  vip: Vip | null;
   prompts: string[];
+}
+
+/**
+ * A guest of honour: one player may take this seat, watch or join a crew, and
+ * their votes on the final ballot count for more.
+ */
+export interface Vip {
+  /** What the seat is called: "Birthday Boy", "Guest of Honour". */
+  title: string;
+  /** What each of their final-ballot votes is worth. */
+  votes: number;
+}
+
+export const VIP_TITLE = "Guest of Honour";
+export const VIP_VOTES = 3;
+const MAX_VIP_VOTES = 9;
+
+/** A pack's "vip": true for the defaults, or { "title": "...", "votes": 3 }. Anything else is no seat. */
+function parseVip(raw: unknown): Vip | null {
+  if (raw === true) return { title: VIP_TITLE, votes: VIP_VOTES };
+  if (!raw || typeof raw !== "object") return null;
+  const { title, votes } = raw as Record<string, unknown>;
+  return {
+    title: typeof title === "string" && title.trim() ? title.trim().slice(0, 24) : VIP_TITLE,
+    votes: Number.isInteger(votes) && (votes as number) >= 1 && (votes as number) <= MAX_VIP_VOTES ? (votes as number) : VIP_VOTES,
+  };
 }
 
 /**
@@ -40,7 +68,7 @@ export const THEMES: Record<string, { crews: string[] }> = {
 const PACK_DIR = path.join(import.meta.dirname, "questions");
 const MAX_PROMPT = 200;
 
-/** One pack file: { "name": "...", "description": "...", "theme": "...", "prompts": ["...", { "text": "..." }] } */
+/** One pack file: { "name": "...", "description": "...", "theme": "...", "vip": { ... }, "prompts": ["...", { "text": "..." }] } */
 export function parsePack(id: string, raw: unknown): Pack {
   if (!raw || typeof raw !== "object") throw new Error("must be a JSON object");
   const file = raw as Record<string, unknown>;
@@ -60,6 +88,7 @@ export function parsePack(id: string, raw: unknown): Pack {
     description: typeof file.description === "string" ? file.description.trim().slice(0, 120) : "",
     // An unknown theme is dropped, so the pack still plays on the usual stage.
     theme: typeof file.theme === "string" && Object.hasOwn(THEMES, file.theme) ? file.theme : null,
+    vip: parseVip(file.vip),
     prompts,
   };
 }
@@ -154,7 +183,7 @@ type Typing = "typing" | "idea";
 
 /** One played round, kept for the end-of-show awards. */
 interface RoundRecord {
-  /** Players who could vote when the round was tallied. */
+  /** The votes one answer could have drawn when the round was tallied: one per voter, more for the guest of honour. */
   eligible: number;
   /** False when a lone answer scored unopposed: nobody had a choice to make. */
   contested: boolean;
@@ -166,7 +195,11 @@ export interface State {
   config: Config;
   /** The chosen pack's look, or null: the usual stage, and always for AI prompts. */
   theme: string | null;
-  /** Player id -> crew index. Players not in here have not picked a crew yet. */
+  /** The chosen pack's guest-of-honour seat, or null: no seat, and always for AI prompts. */
+  vip: Vip | null;
+  /** Who holds the seat. It only counts while `vip` is set. */
+  vipId: string | null;
+  /** Player id -> crew index. Players not in here have not picked a crew yet (or are the guest of honour, watching). */
   teamOf: Record<string, number>;
   scores: number[];
   prompts: string[];
@@ -187,7 +220,7 @@ export interface State {
   /** Player id -> the crews they voted for, oldest pick first. Keys are in the order players first voted. */
   votes: Record<string, number[]>;
   winners: number[];
-  /** Voters who could vote this round, counted when it was tallied. */
+  /** The votes one answer could have drawn this round, counted when it was tallied. */
   eligible: number;
   /** Writers who are typing or have a draft. */
   typing: Record<string, Typing>;
@@ -216,6 +249,15 @@ export function shuffle<T>(items: readonly T[]): T[] {
 const teamIndexes = (g: Game<State>): number[] => Array.from({ length: g.state.config.teams }, (_, i) => i);
 const members = (g: Game<State>, team: number): Player[] => g.players.filter((p) => g.state.teamOf[p.id] === team);
 
+/** Whether this player holds the guest-of-honour seat in a show that has one. */
+const isVip = (g: Game<State>, id: string): boolean => g.state.vip !== null && g.state.vipId === id;
+
+/** The guest of honour without a crew: they watch the crew stage and vote on the final ballot. */
+const watching = (g: Game<State>, id: string): boolean => isVip(g, id) && g.state.teamOf[id] === undefined;
+
+/** What one of this player's final-ballot votes is worth. */
+const weightOf = (g: Game<State>, id: string): number => (isVip(g, id) ? g.state.vip!.votes : 1);
+
 /** Votes each player gets on the final ballot. */
 export const votesPerPlayer = (config: Config): number => (config.teams >= TWO_VOTE_CREWS ? 2 : 1);
 
@@ -238,7 +280,8 @@ const smallest = (sizes: number[]): number => sizes.indexOf(Math.min(...sizes));
 function placeStragglers(g: Game<State>): void {
   const sizes = liveSizes(g);
   for (const p of g.players) {
-    if (!p.connected || p.id in g.state.teamOf) continue;
+    // The guest of honour chose to watch: nobody drafts them.
+    if (!p.connected || p.id in g.state.teamOf || isVip(g, p.id)) continue;
     const team = smallest(sizes);
     g.state.teamOf[p.id] = team;
     sizes[team] += 1;
@@ -259,7 +302,8 @@ export function balance(g: Game<State>): void {
     if (most - least <= 1) return;
     const from = sizes.indexOf(most);
     const to = sizes.indexOf(least);
-    const mover = [...members(g, from)].reverse().find((p) => p.connected)!;
+    // The guest of honour sits where they chose. A crew this much bigger always has someone else to move.
+    const mover = [...members(g, from)].reverse().find((p) => p.connected && !isVip(g, p.id))!;
     g.state.teamOf[mover.id] = to;
     sizes[from] -= 1;
     sizes[to] += 1;
@@ -373,9 +417,13 @@ function beginVote(g: Game<State>): void {
   g.timer("vote", VOTE_MS, () => tally(g));
 }
 
-/** The crews this player may vote for: every answer but the one they wrote themselves. */
+/**
+ * The crews this player may vote for: every answer but the one they wrote
+ * themselves. It takes a crew to vote, or the guest of honour's seat.
+ */
 function choices(g: Game<State>, player: Player): number[] {
-  if (g.state.phase !== "vote" || g.state.teamOf[player.id] === undefined) return [];
+  if (g.state.phase !== "vote") return [];
+  if (g.state.teamOf[player.id] === undefined && !watching(g, player.id)) return [];
   return g.state.ballot.filter((team) => g.state.answers[team].byId !== player.id);
 }
 
@@ -389,8 +437,9 @@ const voters = (g: Game<State>): Player[] => g.players.filter((p) => p.connected
 const votesUsed = (g: Game<State>, player: Player): number => g.state.votes[player.id]?.length ?? 0;
 const doneVoting = (g: Game<State>, player: Player): boolean => votesUsed(g, player) >= voteLimit(g, player);
 
+/** An answer's votes: one per voter who picked it, more for the guest of honour. */
 const votesFor = (g: Game<State>, team: number): number =>
-  Object.values(g.state.votes).filter((picks) => picks.includes(team)).length;
+  Object.entries(g.state.votes).reduce((sum, [id, picks]) => sum + (picks.includes(team) ? weightOf(g, id) : 0), 0);
 
 function tally(g: Game<State>): void {
   g.clearTimer("vote");
@@ -402,7 +451,9 @@ function tally(g: Game<State>): void {
 
 function finishRound(g: Game<State>, winners: number[]): void {
   // Anyone who voted counts as eligible, even if their phone dropped since.
-  g.state.eligible = g.state.ballot.length >= 2 ? new Set([...voters(g).map((p) => p.id), ...Object.keys(g.state.votes)]).size : 0;
+  // Counted in votes, so it is the most any one answer could have drawn.
+  const judges = new Set([...voters(g).map((p) => p.id), ...Object.keys(g.state.votes)]);
+  g.state.eligible = g.state.ballot.length >= 2 ? [...judges].reduce((sum, id) => sum + weightOf(g, id), 0) : 0;
   g.state.winners = winners;
   for (const team of winners) g.state.scores[team] += 1;
   g.state.history.push({
@@ -509,6 +560,8 @@ export function initialState(packs: Pack[]): State {
     phase: "lobby",
     config: { teams: 2, rounds: 5, pack: packs[0]?.id ?? "", source: "pack", aiTheme: "", aiLevel: 1 },
     theme: packs[0]?.theme ?? null,
+    vip: packs[0]?.vip ?? null,
+    vipId: null,
     teamOf: {},
     scores: [],
     prompts: [],
@@ -538,6 +591,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
     id: entry.id,
     name: entry.name,
     theme: entry.theme,
+    vip: entry.vip,
     description: entry.description,
     count: entry.prompts.length,
   }));
@@ -603,15 +657,22 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         if (Number.isInteger(aiLevel) && (aiLevel as number) >= 0 && (aiLevel as number) < AI_LEVELS.length) {
           config.aiLevel = aiLevel as number;
         }
-        g.state.theme = usesAi(g) ? null : (packs.find((entry) => entry.id === config.pack)?.theme ?? null);
+        const chosen = usesAi(g) ? undefined : packs.find((entry) => entry.id === config.pack);
+        g.state.theme = chosen?.theme ?? null;
+        // Whoever holds the seat keeps it if the host comes back to a pack that has one.
+        g.state.vip = chosen?.vip ?? null;
         g.state.aiError = null;
       },
 
       /** Deal everyone into crews at random, as evenly as possible. */
       shuffle(g) {
         if (g.state.phase !== "lobby") return;
+        // The guest of honour stays where they chose: on their crew, or watching.
+        const vip = g.players.find((p) => isVip(g, p.id));
+        const kept = vip ? g.state.teamOf[vip.id] : undefined;
         g.state.teamOf = {};
-        shuffle(g.players).forEach((player, i) => {
+        if (vip && kept !== undefined) g.state.teamOf[vip.id] = kept;
+        shuffle(g.players.filter((p) => p !== vip)).forEach((player, i) => {
           g.state.teamOf[player.id] = i % g.state.config.teams;
         });
       },
@@ -645,6 +706,12 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         if (g.state.phase === "end" || g.state.phase === "generating") g.state.phase = "lobby";
       },
 
+      /** Empty the guest-of-honour seat, when the wrong phone took it. Whoever held it keeps their crew. */
+      unseat(g) {
+        if (g.state.phase !== "lobby") return;
+        g.state.vipId = null;
+      },
+
       exit(g) {
         g.end();
       },
@@ -656,6 +723,28 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         if (!Number.isInteger(team) || team < 0 || team >= g.state.config.teams) return;
         if (g.state.phase !== "lobby" && player.id in g.state.teamOf) return;
         g.state.teamOf[player.id] = team;
+      },
+
+      /**
+       * Take the guest-of-honour seat (true) or give it back (false). There is
+       * one seat, first come first served. Once the show is running only a
+       * latecomer without a crew can take it, and nobody can give it back.
+       */
+      vip(g, player, on) {
+        if (!g.state.vip) return;
+        if (on === false) {
+          if (g.state.phase === "lobby" && g.state.vipId === player.id) g.state.vipId = null;
+          return;
+        }
+        if (on !== true || (g.state.vipId !== null && g.state.vipId !== player.id)) return;
+        if (g.state.phase !== "lobby" && player.id in g.state.teamOf) return;
+        g.state.vipId = player.id;
+      },
+
+      /** The guest of honour leaves their crew to watch instead. Like switching crews, only in the lobby. */
+      watch(g, player) {
+        if (g.state.phase !== "lobby" || !isVip(g, player.id)) return;
+        delete g.state.teamOf[player.id];
       },
 
       /** Lock in your own answer. One each, no take-backs; teammates see it straight away. */
@@ -685,11 +774,13 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         else delete g.state.typing[player.id];
       },
 
-      /** A reaction from a phone that has locked its answer (or run out of time to), shown on the projector. */
+      /** A reaction from a phone that has locked its answer (or run out of time to, or is only watching), shown on the projector. */
       heckle(g, player, kind) {
         const team = g.state.teamOf[player.id];
-        if (g.state.phase !== "team" || team === undefined) return;
-        if (g.state.writeOpen && !(player.id in g.state.locked)) return;
+        const spectating = watching(g, player.id);
+        if (g.state.phase !== "team" || (team === undefined && !spectating)) return;
+        // The guest of honour, watching, has nothing to write and can heckle from the start.
+        if (!spectating && g.state.writeOpen && !(player.id in g.state.locked)) return;
         if (typeof kind !== "string" || !HECKLES.includes(kind)) return;
         const now = Date.now();
         if (now - (g.state.heckledAt[player.id] ?? 0) < HECKLE_GAP_MS) return;
@@ -698,7 +789,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         g.state.heckleWindow.push(now);
         g.state.heckledAt[player.id] = now;
         g.state.heckles[player.id] = (g.state.heckles[player.id] ?? 0) + 1;
-        g.send("host", "heckle", { kind, name: player.name, team });
+        g.send("host", "heckle", { kind, name: player.name, team: team ?? null, vip: isVip(g, player.id) });
       },
 
       /**
@@ -738,6 +829,10 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         return !player || doneVoting(g, player);
       });
       const pending = canVote.filter((p) => !done.includes(p.id));
+      const seat = g.state.vip;
+      const holder = seat ? g.players.find((p) => p.id === g.state.vipId) : undefined;
+      /** The guest of honour goes first wherever voters are listed. */
+      const vipFirst = <T extends { vip: boolean }>(list: T[]): T[] => [...list.filter((v) => v.vip), ...list.filter((v) => !v.vip)];
       const writers = g.players.filter((p) => teamOf[p.id] !== undefined && (p.connected || p.id in locked));
       return {
         phase,
@@ -747,6 +842,14 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         total: prompts.length || config.rounds,
         config,
         theme: g.state.theme,
+        // The seat, and who is in it: on a crew, or watching (team: null).
+        vip: seat
+          ? {
+              title: seat.title,
+              votes: seat.votes,
+              holder: holder ? { name: holder.name, team: teamOf[holder.id] ?? null, connected: holder.connected } : null,
+            }
+          : null,
         packs: packList,
         aiAvailable,
         aiLevels: AI_LEVELS,
@@ -764,6 +867,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
             members: crew.map((p) => ({
               name: p.name,
               connected: p.connected,
+              vip: isVip(g, p.id),
               typing: phase === "team" ? (typing[p.id] ?? null) : null,
             })),
             // Progress only: the projector never sees an answer before the final vote.
@@ -773,7 +877,7 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
             submitted: phase === "team" && writing.length > 0 && lockedIn === writing.length,
           };
         }),
-        unassigned: g.players.filter((p) => !(p.id in teamOf)).map((p) => p.name),
+        unassigned: g.players.filter((p) => !(p.id in teamOf) && !isVip(g, p.id)).map((p) => p.name),
         problem: startProblem(g),
         prompt: showsPrompt(phase) ? (prompts[round] ?? null) : null,
         ...clock(g),
@@ -787,10 +891,10 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
         voters: phase === "vote" ? new Set([...done, ...canVote.map((p) => p.id)]).size : 0,
         voterList:
           phase === "vote"
-            ? [
-                ...done.map((id) => ({ name: nameOf(g, id), team: teamOf[id] ?? null, voted: true })),
-                ...pending.map((p) => ({ name: p.name, team: teamOf[p.id] ?? null, voted: false })),
-              ]
+            ? vipFirst([
+                ...done.map((id) => ({ name: nameOf(g, id), team: teamOf[id] ?? null, voted: true, vip: isVip(g, id) })),
+                ...pending.map((p) => ({ name: p.name, team: teamOf[p.id] ?? null, voted: false, vip: isVip(g, p.id) })),
+              ])
             : null,
         results:
           phase === "result"
@@ -800,12 +904,16 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
                   name: crewName(g, team),
                   text: answers[team]?.text ?? null,
                   by: answers[team]?.by ?? null,
-                  voters: g.players
-                    .filter((p) => votes[p.id]?.includes(team))
-                    .map((p) => ({ name: p.name, team: teamOf[p.id] ?? null })),
+                  // Who picked it, and what those picks add up to.
+                  voters: vipFirst(
+                    g.players
+                      .filter((p) => votes[p.id]?.includes(team))
+                      .map((p) => ({ name: p.name, team: teamOf[p.id] ?? null, vip: isVip(g, p.id) })),
+                  ),
+                  votes: votesFor(g, team),
                   won: winners.includes(team),
                 }))
-                .sort((a, b) => b.voters.length - a.voters.length || Number(b.text !== null) - Number(a.text !== null) || a.team - b.team)
+                .sort((a, b) => b.votes - a.votes || Number(b.text !== null) - Number(a.text !== null) || a.team - b.team)
             : null,
         eligible: phase === "result" ? g.state.eligible : 0,
         unopposed: phase === "result" && ballot.length === 1,
@@ -825,10 +933,28 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
       const pending = phase === "vote" ? voters(g).filter((p) => !doneVoting(g, p)) : [];
       const ownAnswer = team !== undefined ? answers[team] : undefined;
       const hasLocked = player.id in locked;
+      const seat = g.state.vip;
+      const holder = seat ? g.players.find((p) => p.id === g.state.vipId) : undefined;
+      const spectating = watching(g, player.id);
       return {
         phase,
         name: player.name,
         theme: g.state.theme,
+        // The guest-of-honour seat, if this show has one.
+        vip: seat
+          ? {
+              title: seat.title,
+              votes: seat.votes,
+              mine: holder?.id === player.id,
+              takenBy: holder && holder.id !== player.id ? holder.name : null,
+              canClaim: !holder && (phase === "lobby" || team === undefined),
+              canLeave: holder?.id === player.id && phase === "lobby",
+            }
+          : null,
+        /** True for the guest of honour without a crew: no writing, but a vote on the final ballot. */
+        watching: spectating,
+        /** What one of this player's final-ballot votes is worth. */
+        voteWeight: weightOf(g, player.id),
         round: round + 1,
         total: prompts.length || config.rounds,
         team: team ?? null,
@@ -840,6 +966,8 @@ export function createDefinition(packs: Pack[] = loadPacks(), options: Options =
           name: crewName(g, index),
           members: members(g, index).map((p) => p.name),
         })),
+        // The crew stage from the guest of honour's seat: nothing to write, plenty to heckle.
+        spectate: phase === "team" && spectating ? { heckles: HECKLES, heckleGap: HECKLE_GAP_MS } : null,
         prompt: showsPrompt(phase) ? (prompts[round] ?? null) : null,
         ...clock(g),
         // The crew stage. Only this player's own crew is in here: other crews'

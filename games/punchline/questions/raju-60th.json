@@ -2,6 +2,7 @@
   "name": "Raju's 60th",
   "description": "A birthday roast for Raju Uncle. Dresses the whole show for the party.",
   "theme": "raju60",
+  "vip": { "title": "Birthday Boy", "votes": 3 },
   "prompts": [
     "The real reason Raju Uncle still prints his boarding pass",
     "What Raju Uncle whispers to the thermostat when nobody is looking",
