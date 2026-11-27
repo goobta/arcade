@@ -18,6 +18,8 @@ export interface GameManifest {
   healthPath: string;
   startTimeoutMs: number;
   maxHeapMb?: number;
+  /** Names of hub environment variables this game is allowed to see. */
+  env: string[];
   /** Absolute path of the game folder. */
   dir: string;
 }
@@ -30,6 +32,10 @@ export interface Catalog {
 
 const ID = /^[a-z0-9][a-z0-9-]{1,30}$/;
 const SUBPATH = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,100}$/;
+
+const ENV_NAME = /^[A-Z][A-Z0-9_]{0,63}$/;
+/** Set by the runner for every game; a manifest cannot ask for the hub's value instead. */
+export const RUNNER_ENV = ["PATH", "HOME", "PORT", "HOST", "BASE_PATH", "TZ", "NODE_ENV", "NODE_OPTIONS"];
 
 function fail(message: string): never {
   throw new Error(message);
@@ -57,6 +63,25 @@ function subpath(value: unknown, field: string, fallback: string): string {
     fail(`"${field}" must be a relative path without ".."`);
   }
   return value;
+}
+
+/**
+ * "env": the hub variables a game may read, by name. Everything under ARCADE_
+ * is the hub's own (the host PIN above all) and can never be asked for.
+ */
+function envNames(value: unknown): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 16) fail(`"env" must be a list of at most 16 variable names`);
+  const names: string[] = [];
+  for (const name of value) {
+    if (typeof name !== "string" || !ENV_NAME.test(name)) {
+      fail(`"env" names must match ${ENV_NAME} (capitals, digits, underscores)`);
+    }
+    if (name.startsWith("ARCADE_")) fail(`"env" cannot include "${name}": ARCADE_ variables belong to the hub`);
+    if (RUNNER_ENV.includes(name)) fail(`"env" cannot include "${name}": the hub sets it for every game`);
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
 }
 
 /** Validates one parsed game.json. Throws with the reason when it is unusable. */
@@ -108,6 +133,7 @@ export function parseManifest(raw: unknown, dir: string): GameManifest | null {
     healthPath: subpath(m.healthPath, "healthPath", "healthz"),
     startTimeoutMs: count(m.startTimeoutMs, "startTimeoutMs", 15_000, 500, 120_000),
     maxHeapMb: m.maxHeapMb === undefined ? undefined : count(m.maxHeapMb, "maxHeapMb", 96, 32, 2048),
+    env: envNames(m.env),
     dir,
   };
 }

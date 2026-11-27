@@ -11,7 +11,7 @@ const MINUTE = 60_000;
 function game(id: string): GameManifest {
   return {
     id, name: `Game ${id}`, blurb: "", minPlayers: 1, maxPlayers: 8, start: ["node", "x"],
-    hostPath: "host", playPath: "play", healthPath: "healthz", startTimeoutMs: 1000, dir: "/tmp",
+    hostPath: "host", playPath: "play", healthPath: "healthz", startTimeoutMs: 1000, env: [], dir: "/tmp",
   };
 }
 

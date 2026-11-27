@@ -87,7 +87,7 @@ button {
   touch-action: manipulation;
 }
 button:disabled { cursor: default; }
-button:focus-visible, textarea:focus-visible { outline: 4px solid var(--yellow); outline-offset: 3px; }
+button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 4px solid var(--yellow); outline-offset: 3px; }
 [hidden] { display: none !important; }
 .muted { color: var(--lavender); }
 
@@ -278,6 +278,27 @@ button:focus-visible, textarea:focus-visible { outline: 4px solid var(--yellow);
 .menu.panel .menu button.on { background: var(--yellow); }
 .menu button:hover { border-color: var(--ink); }
 .menu button.on { background: var(--yellow); border-color: var(--ink); }
+
+/* The AI writer's knobs: a theme and a spice slider, inside a settings panel. */
+.menu.panel.ai { min-width: 440px; }
+.ai-controls { display: flex; flex-direction: column; gap: 8px; color: var(--ink); }
+.ai-controls .label b { color: var(--pink-ink); }
+.ai-controls input[type="text"] {
+  font: inherit; font-weight: 800; font-size: 17px; color: var(--ink); background: #fff;
+  border: 3px solid var(--ink); border-radius: 12px; padding: 8px 12px; width: 100%;
+}
+.ai-controls input[type="text"]::placeholder { color: var(--muted-line); }
+.ai-controls input[type="range"] { width: 100%; accent-color: var(--pink); margin: 4px 0 0; cursor: pointer; }
+.ai-controls .ticks { display: flex; justify-content: space-between; font-size: 14px; font-weight: 900; color: var(--plum-ink); }
+.ai-controls .ticks .on { color: var(--ink); background: var(--yellow); border-radius: 8px; padding: 0 6px; margin: 0 -6px; }
+
+/* Waiting for the AI writer */
+.generating { gap: 20px; }
+.generating > .top { align-items: flex-start; }
+.writing-room { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+.writing-room h1 { font-family: var(--display); font-weight: 400; font-size: 72px; line-height: 1.05; color: var(--yellow); text-shadow: 5px 5px 0 var(--pink); }
+.writing-room h1 .dots i { width: 14px; height: 14px; }
+.writing-room .brief { font-size: 24px; font-weight: 800; color: var(--lavender); max-width: 900px; }
 
 /* Card lobby (up to four crews, a modest room) */
 .lobby { gap: 20px; }
@@ -634,6 +655,11 @@ button:focus-visible, textarea:focus-visible { outline: 4px solid var(--yellow);
 }
 .timebar .left { position: absolute; right: 0; top: 14px; font-weight: 900; font-size: 13px; color: var(--lavender); }
 .play .center .timebar { align-self: stretch; margin-top: 20px; }
+/* The crew stage's two-part clock: yellow while writing, pink for the last few seconds of voting. */
+.timebar.staged .left { letter-spacing: 1px; }
+.timebar.staged.voting i { background: var(--pink); }
+.timebar.staged.voting .spark { background: var(--yellow); }
+.timebar.staged.voting .left { color: var(--yellow); }
 
 /* Write */
 .play .prompt-card {
@@ -666,6 +692,22 @@ button:focus-visible, textarea:focus-visible { outline: 4px solid var(--yellow);
 .sealed .tag, .mine .tag { font-size: 12px; font-weight: 900; letter-spacing: 3px; color: var(--pink-ink); }
 .sealed p { font-size: 26px; font-weight: 900; line-height: 1.15; margin-top: 4px; }
 .sealed .stamp.locked { right: -6px; top: -26px; font-size: 24px; background: var(--ink); }
+
+/* The crew stage after locking: your answer, your crew's, heckles while the clock runs */
+.huddle { flex: 1; display: flex; flex-direction: column; gap: 12px; }
+.huddle h1 { margin-top: 6px; }
+.huddle .sealed { margin: 22px 6px 6px 0; }
+.huddle .muted { text-align: center; }
+.crew-answers { display: flex; flex-direction: column; gap: 12px; }
+.crew-answers:empty { display: none; }
+.options.mates { margin-top: 0; gap: 12px; }
+.options.mates .option { min-height: 68px; }
+.options.mates .avatar { border-width: 3px; }
+.options.mates .option:disabled { cursor: default; }
+.while-waiting { margin-top: auto; display: flex; flex-direction: column; gap: 10px; padding-top: 8px; }
+.heckles.row { grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 0; }
+.heckles.row .heckle-btn { height: 56px; font-size: 22px; border-width: 4px; border-radius: 16px; box-shadow: 4px 4px 0 var(--shadow); }
+.play .center h1 .dots { margin-left: 6px; }
 
 /* Heckle */
 .heckle-screen { flex: 1; display: flex; flex-direction: column; gap: 16px; }

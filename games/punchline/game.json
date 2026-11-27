@@ -2,9 +2,10 @@
   "manifest": 1,
   "id": "punchline",
   "name": "Punchline",
-  "blurb": "Open mic night: crews write the funniest answer to a prompt, everyone votes, best answer scores.",
+  "blurb": "Open mic night: everyone writes, crews pick their funniest answer, the room votes, best answer scores.",
   "minPlayers": 2,
   "maxPlayers": 100,
   "start": ["node", "server.ts"],
+  "env": ["ANTHROPIC_API_KEY"],
   "thumbnail": "public/thumb.svg"
 }

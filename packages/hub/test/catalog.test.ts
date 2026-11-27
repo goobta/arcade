@@ -48,6 +48,7 @@ test("defaults are filled in", () => {
   assert.equal(game.healthPath, "healthz");
   assert.equal(game.startTimeoutMs, 15_000);
   assert.equal(game.thumbnail, undefined);
+  assert.deepEqual(game.env, []);
   assert.equal(game.dir, path.join(dir, "quiz"));
 });
 
@@ -103,6 +104,25 @@ function parseManifestError(run: () => unknown): string {
   }
   return "";
 }
+
+test("a game can ask for hub environment variables by name, but never the hub's own", () => {
+  const dir = path.join(gamesDir({ quiz: valid("quiz") }), "quiz");
+  const env = (names: unknown) => parseManifest(valid("quiz", { env: names }), dir)!.env;
+  assert.deepEqual(env(["ANTHROPIC_API_KEY", "MY_KEY_2", "ANTHROPIC_API_KEY"]), ["ANTHROPIC_API_KEY", "MY_KEY_2"]);
+  assert.deepEqual(env([]), []);
+
+  const refused = (names: unknown) => parseManifestError(() => env(names));
+  assert.match(refused(["ARCADE_HOST_PIN"]), /ARCADE_ variables belong to the hub/);
+  assert.match(refused(["ARCADE_SECRET"]), /ARCADE_ variables belong to the hub/);
+  for (const name of ["PATH", "HOME", "PORT", "HOST", "BASE_PATH", "TZ", "NODE_ENV", "NODE_OPTIONS"]) {
+    assert.match(refused([name]), /the hub sets it for every game/, name);
+  }
+  for (const bad of ["lowercase", "1LEADING_DIGIT", "HAS-DASH", "HAS SPACE", "", "A".repeat(65)]) {
+    assert.match(refused([bad]), /"env" names must match/, bad);
+  }
+  assert.match(refused([42]), /"env" names must match/);
+  assert.match(refused("ANTHROPIC_API_KEY"), /"env" must be a list/);
+});
 
 test("a missing games folder is reported, not fatal", () => {
   const { games, problems } = scanGames("/nonexistent/arcade/games");

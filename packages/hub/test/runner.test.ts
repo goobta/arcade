@@ -61,6 +61,38 @@ test("a game gets the launch details but none of the hub's own environment", asy
   assert.match(env.NODE_OPTIONS, /--max-old-space-size=64/);
 });
 
+test("a game gets the hub variables its manifest asks for, and only those", async (t) => {
+  process.env.ARCADE_HOST_PIN = "do-not-leak-me";
+  process.env.PUNCHLINE_TEST_KEY = "sk-test-forward-me";
+  process.env.SOME_OTHER_SECRET = "nor-me";
+  delete process.env.PUNCHLINE_TEST_UNSET;
+  t.after(() => {
+    delete process.env.PUNCHLINE_TEST_KEY;
+    delete process.env.SOME_OTHER_SECRET;
+  });
+  const r = await runner();
+  const read = async (game: ReturnType<typeof fixture>) => {
+    const launch = await r.launch(game, info);
+    const env = (await (await fetch(`http://127.0.0.1:${launch.port}/env`)).json()) as Record<string, string>;
+    await r.stop(launch.id);
+    return env;
+  };
+
+  const asked = await read({ ...fixture("ok"), env: ["PUNCHLINE_TEST_KEY", "PUNCHLINE_TEST_UNSET"] });
+  assert.equal(asked.PUNCHLINE_TEST_KEY, "sk-test-forward-me");
+  assert.equal("PUNCHLINE_TEST_UNSET" in asked, false, "a variable the hub does not have is not invented");
+  assert.equal(asked.SOME_OTHER_SECRET, undefined);
+  assert.equal(asked.ARCADE_HOST_PIN, undefined);
+
+  // The catalog refuses these names; even if one slipped through, the runner's own values win.
+  const sneaky = await read({ ...fixture("ok"), env: ["PORT", "HOME"] });
+  assert.notEqual(sneaky.PORT, process.env.PORT);
+  assert.equal(sneaky.HOME, "/tmp");
+
+  const silent = await read(fixture("ok"));
+  assert.equal(silent.PUNCHLINE_TEST_KEY, undefined);
+});
+
 test("each launch gets its own id and secret", async () => {
   const r = await runner();
   const first = await r.launch(fixture("ok"), info);

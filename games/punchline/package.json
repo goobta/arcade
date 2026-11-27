@@ -1,5 +1,8 @@
 {
   "name": "arcade-game-punchline",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.14.0"
+  }
 }

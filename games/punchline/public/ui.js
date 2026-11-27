@@ -253,24 +253,28 @@ var CREW_QUIPS = [
 ];
 
 var QUIPS = {
-  writeJudges: [
-    "{judges}, you're judging this one. Warm up those heckle buttons.",
-    "{judges}: heckle now, judge later. That's showbiz.",
-    "Writers, the clock is ticking. {judges} are getting restless.",
-  ],
-  writeEveryone: [
+  write: [
     "Everybody's writing. Nobody's safe.",
     "All crews on deck. I've seen funnier silence, so make it count.",
-    "Pens out, everyone. The judges are... also you. Awkward.",
+    "Pens out, everyone. Lock yours in, then back a teammate's.",
+  ],
+  crewVote: [
+    "Pens down! Five seconds to back your crew's best line.",
+    "Writing's closed. Pick a teammate's answer, quick.",
   ],
   vote: [
-    "{judges}, you're the judges. No pressure. Total pressure.",
     "Pick the one that made you snort. Honesty is mandatory.",
     "Votes are secret. Your face is not.",
+    "Any answer but the one you wrote. Yes, your crew's counts.",
   ],
-  voteOpen: [
-    "Everyone votes, even on your own crew. Be honest. I'll know.",
-    "Two crews, one stage. Vote with your heart, not your loyalty.",
+  voteTwo: [
+    "Two votes each, two different answers. Spend them wisely.",
+    "You get two picks. Not on the same answer, and not on your own.",
+  ],
+  generating: [
+    "Hold the curtain! I'm writing tonight's material.",
+    "One moment. Fresh jokes take at least a few seconds.",
+    "I'm asking a very clever friend for prompts. Talk amongst yourselves.",
   ],
   idle: [
     "is staring at the ceiling",
