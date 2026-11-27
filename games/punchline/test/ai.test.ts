@@ -87,6 +87,23 @@ test("each level has its own rubric, and no theme means a general party", async 
   assert.equal(new Set(seen).size, 5);
 });
 
+test("enhancing a pack: its own prompts go along as the style to match, and are never handed back", async () => {
+  const pack = { name: "Raju's 60th", description: "Roasts for the birthday boy.", examples: ["The worst gift to bring to Raju Uncle's 60th", "Raju Uncle's secret talent"] };
+  const { calls, fetch } = stub(() =>
+    message({ prompts: ["raju uncle's SECRET talent!", "What Raju Uncle says to the DJ", "Raju Uncle's first words at 61", "Spare"] }),
+  );
+  const prompts = await generatePrompts({ theme: "", level: 0, count: 2, avoid: [], pack }, options(fetch));
+  // A reworded copy of one of the pack's own is dropped.
+  assert.deepEqual(prompts, ["What Raju Uncle says to the DJ", "Raju Uncle's first words at 61"]);
+
+  const user = calls[0].body.messages[0].content;
+  assert.match(user, /^Write 5 prompts\./);
+  assert.match(user, /Spice level: Unc\./);
+  assert.match(user, /<pack name="Raju's 60th">\nRoasts for the birthday boy\.\n- The worst gift to bring to Raju Uncle's 60th\n- Raju Uncle's secret talent\n<\/pack>/);
+  assert.equal(user.includes("<theme>"), false);
+  assert.equal(user.includes("general party crowd"), false);
+});
+
 test("a refusal becomes a message the host can act on", async () => {
   const { fetch } = stub(() =>
     message("", { content: [], stop_reason: "refusal", stop_details: { type: "refusal", category: null, explanation: null } }),

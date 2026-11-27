@@ -15,6 +15,7 @@ The host sets these in the lobby:
 | Crews | 2 to 6 | 2 |
 | Rounds | 3, 5, 8 or 10 | 5 |
 | Questions | every pack in `questions/`, or ✨ AI (see [AI prompts](#ai-prompts)) | first pack by file name |
+| ✨ Enhance | how much of a pack's show the AI writes, 0 to 100% (see [AI enhance](#ai-enhance)) | off |
 
 Every round has two stages, and every crew plays both.
 
@@ -201,10 +202,29 @@ choice is simply not offered, and the game works as before.
 - **Encore** writes a new set with the same theme and level, and tells the
   model which prompts this room has already played.
 
+### AI enhance
+
+A pack can be topped up instead of replaced. With the key set, a **✨ Enhance**
+pill sits next to the chosen pack in the lobby, and opens two sliders:
+
+- **AI share** is how much of the show the AI writes, from 0% (off, the
+  default) to 100% in steps of ten. It is a share of the rounds, rounded, and
+  never none while it is above zero: 40% of 5 rounds is 2 AI prompts and 3 of
+  the pack's own. At 100% every prompt is new.
+- **Spice** is the same slider as above, and applies to what the AI writes.
+
+The AI is shown the pack's name, description and prompts (the first 80) and
+asked for more of the same, so new prompts keep to the pack's subject, voice
+and running jokes; anything that repeats one of the pack's own is thrown away.
+The two kinds are shuffled together and nothing on screen says which is which.
+It is still the pack's show: its look and its guest-of-honour seat stay. The
+wait, the failure message and **Encore** work as they do for a full AI show.
+
 The key reaches the game through the hub: `game.json` lists it under `"env"`,
 which is the only way a game sees any of the hub's environment. The theme is
 typed by the host and is sent to the model as data, not as instructions. The
-generator is in [`ai.ts`](ai.ts); it is only loaded when AI prompts are used.
+generator is in [`ai.ts`](ai.ts); it is only loaded when AI prompts are used
+or mixed in.
 
 Local development needs the game's own packages once:
 

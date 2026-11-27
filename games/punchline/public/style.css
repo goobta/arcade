@@ -317,7 +317,7 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 4px
   text-align: left; font-size: 17px; background: transparent; border: 3px solid transparent;
   border-radius: 12px; padding: 6px 12px; white-space: nowrap;
 }
-.menu.panel { flex-direction: column; gap: 12px; min-width: 520px; padding: 14px; }
+.menu.panel { flex-direction: column; gap: 10px; min-width: 520px; max-height: 500px; padding: 14px; }
 .menu.panel .group { display: flex; flex-direction: column; gap: 6px; }
 .menu.panel .label { font-size: 13px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; color: var(--plum-ink); }
 .menu.panel .menu { position: static; flex-direction: row; flex-wrap: wrap; border: 0; box-shadow: none; padding: 0; min-width: 0; max-height: none; background: none; }
