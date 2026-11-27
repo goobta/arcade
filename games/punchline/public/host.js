@@ -1,4 +1,4 @@
-// The projector: a fixed 1280×720 comedy-club stage, scaled to fit the screen.
+// The projector: a comedy-club stage laid out at 1280×720 or larger, scaled to fill the window.
 var game = Arcade.connect();
 var app = document.getElementById("app");
 var fx = document.getElementById("fx");
@@ -13,11 +13,47 @@ var CARD_LOBBY_MAX_CREWS = 4;
 var lastView = null;
 var openMenu = null; // which lobby setting has its menu open
 
+/**
+ * The stage is never smaller than 1280×720, and grows along one side to match
+ * the window's shape, so it fills the window whatever that shape is: a 16:9
+ * projector gets exactly 1280×720, a squarer window a taller stage, an
+ * ultrawide one a wider stage.
+ */
 function fitStage() {
   var scale = Math.min(window.innerWidth / 1280, window.innerHeight / 720);
+  if (!(scale > 0)) return; // not on screen yet
+  stage.style.width = Math.round(window.innerWidth / scale) + "px";
+  stage.style.height = Math.round(window.innerHeight / scale) + "px";
   stage.style.transform = "translate(-50%, -50%) scale(" + scale + ")";
 }
-window.addEventListener("resize", fitStage);
+
+/**
+ * A long prompt on a short stage pushes the bottom row off the edge. Shrink
+ * the prompt, below what fitAll settled on, until the whole screen fits.
+ */
+function fitScreen() {
+  var screen = app.firstElementChild;
+  var prompt = screen && screen.querySelector(".prompt-card p");
+  var last = screen && screen.lastElementChild;
+  if (!prompt || !last) return;
+  var room = screen.clientHeight - parseFloat(getComputedStyle(screen).paddingBottom);
+  var size = parseFloat(getComputedStyle(prompt).fontSize);
+  var min = Number(prompt.getAttribute("data-fit")) || 14;
+  while (size > min && last.offsetTop + last.offsetHeight > room + 1) {
+    size -= 2;
+    prompt.style.fontSize = size + "px";
+  }
+}
+
+function refit() {
+  fitStage();
+  if (!app.firstElementChild) return;
+  fitAll(app);
+  fitScreen();
+}
+window.addEventListener("resize", refit);
+// ui.js refits the text once the fonts are in; the screen needs checking again after that.
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(refit);
 fitStage();
 
 function send(type, data) {
@@ -594,9 +630,9 @@ function write(view) {
       { class: "prompt-card sticker" + (n > 3 ? " short" : "") },
       el("span", { class: "tag" }, "THE PROMPT"),
       el("p", { "data-fit": "28" }, view.prompt),
+      n > 3 ? null : lookArt("dancerLeft", "beside left sway"),
+      n > 3 ? null : lookArt("dancerRight", "beside right sway"),
     ),
-    n > 3 ? null : lookArt("dancerLeft", "beside left sway"),
-    n > 3 ? null : lookArt("dancerRight", "beside right sway"),
     el(
       "div",
       { class: "writers n" + n },
@@ -817,7 +853,7 @@ function result(view) {
   var won = view.results.some(function (entry) {
     return entry.won;
   });
-  if (won && once("confetti" + view.round)) confetti(fx, 28, 760);
+  if (won && once("confetti" + view.round)) confetti(fx, 28, stage.clientHeight + 40);
   return el(
     "div",
     { class: "screen reveal" },
@@ -985,13 +1021,13 @@ game.on("heckle", function (h) {
   if (live.length >= MAX_HECKLES_ON_SCREEN) live[0].remove();
   // Float up from either side of the stage, clear of the prompt in the middle.
   // Spread across the stage, starting just above Rimshot's speech bubble.
-  var x = 60 + Math.random() * 1080;
+  var x = 60 + Math.random() * (stage.clientWidth - 200);
   var bubble = el(
     "div",
     {
       class: "heckle " + crewClass(h.team),
       style:
-        "left:" + x.toFixed(0) + "px; top:" + (460 + Math.random() * 70).toFixed(0) + "px;" +
+        "left:" + x.toFixed(0) + "px; top:" + (stage.clientHeight - 260 + Math.random() * 70).toFixed(0) + "px;" +
         "background:" + (HECKLE_COLOURS[h.kind] || "#FFD23F") + "; --tilt:" + (Math.random() * 14 - 7).toFixed(1) + "deg",
     },
     heckleLabel(h.kind),
@@ -1028,6 +1064,7 @@ function render(view) {
   var typing = document.activeElement && document.activeElement.id === "ai-theme" ? document.activeElement : null;
   var caret = typing ? [typing.selectionStart, typing.selectionEnd] : null;
   mount(app, SCREENS[view.phase](view));
+  fitScreen();
   if (view.phase === "lobby") startLanes(app);
   if (typing) {
     var box = document.getElementById("ai-theme");

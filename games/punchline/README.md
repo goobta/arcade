@@ -76,7 +76,7 @@ caps a party, and defaults to 16). With more than four crews or more than 16
 players, the projector lobby swaps the crew cards for scrolling lanes of names,
 with a QR code to join.
 
-The fonts (Bagel Fat One and Nunito, plus Modak and Baloo 2 for the Raju's 60th
+The fonts (Bagel Fat One and Nunito, plus Baloo 2 for the Raju's 60th
 look, all SIL Open Font License) are served from
 `public/fonts`, so the game needs no internet connection.
 
@@ -132,9 +132,9 @@ A look has three parts, all under the same key:
 `raju60` ([`questions/raju-60th.json`](questions/raju-60th.json)) is a
 wedding-tent night: Indian sweets for crews (Gulab Jamuns, Kulfis, Ladoos,
 Barfis, Faloodas, Jalebis), Rimshot ji in a turban, dancers in saris, tablas,
-marigold garlands, and "WAH WAH!" in place of "ZING!". Its type is Modak and
-Baloo 2, served from `public/fonts` like the others and fetched only when the
-look is on.
+marigold garlands, and "WAH WAH!" in place of "ZING!". Its type is Baloo 2,
+served from `public/fonts` like the others and fetched only when the look is
+on.
 
 ## Guest of honour
 
