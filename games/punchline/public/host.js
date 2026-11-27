@@ -39,8 +39,8 @@ function marquee(small) {
     "div",
     { class: "marquee" + (small ? " small" : "") },
     bulbs(small ? 10 : 14),
-    el("h1", {}, "PUNCHLINE"),
-    small ? null : el("p", { class: "tagline" }, "The team comedy showdown"),
+    el("h1", {}, say("title", "PUNCHLINE")),
+    small ? null : el("p", { class: "tagline" }, say("tagline", "The team comedy showdown")),
   );
 }
 
@@ -300,7 +300,7 @@ function lobbyLine(view) {
     return team.members.length === 0;
   });
   if (view.aiError) return "My joke writer choked. " + view.aiError;
-  if (view.players === 0) return "Grab your phone and join the party! The code's up there in lights.";
+  if (view.players === 0) return say("lobbyEmpty", "Grab your phone and join the party! The code's up there in lights.");
   if (empty.length) {
     return verb(
       empty.map(function (team) {
@@ -312,13 +312,13 @@ function lobbyLine(view) {
   }
   if (short) return "Watch for your name! " + short.name + " could use reinforcements.";
   if (view.unassigned.length) {
-    return "Grab your phone and pick a crew! Anyone still dithering when the curtain goes up joins the smallest crew.";
+    return say("lobbyChoosing", "Grab your phone and pick a crew! Anyone still dithering when the curtain goes up joins the smallest crew.");
   }
   return pick(
-    [
+    say("lobbyReady", [
       "Crews are set. Snacks are judged. Hit the big pink button when you're ready.",
       plural(view.players, "comedian") + ", one stage. I've never been so nervous.",
-    ],
+    ]),
     view.players,
   );
 }
@@ -332,7 +332,7 @@ function lobbyActions(view, small) {
     el(
       "button",
       { id: "start", class: "big pink" + (small ? " small" : ""), disabled: !!view.problem, title: view.problem || null, onclick: send("start") },
-      "Raise the curtain!",
+      say("start", "Raise the curtain!"),
     ),
   );
 }
@@ -362,7 +362,7 @@ function cardLobby(view) {
   return el(
     "div",
     { class: "screen lobby" },
-    el("div", { class: "top" }, marquee(false), roomCode(view, false)),
+    el("div", { class: "top" }, marquee(false), lookArt("troupe"), roomCode(view, false)),
     el("div", { class: "crews n" + view.teams.length }, view.teams.map(crewCard)),
     view.unassigned.length
       ? el(
@@ -554,7 +554,7 @@ function writerCard(team, compact, writeOpen) {
 
 function write(view) {
   var n = view.teams.length;
-  var line = pick(view.writeOpen ? QUIPS.write : QUIPS.crewVote, "w" + view.round);
+  var line = pick(view.writeOpen ? quips("write") : quips("crewVote"), "w" + view.round);
   return el(
     "div",
     { class: "screen write" },
@@ -565,6 +565,8 @@ function write(view) {
       el("span", { class: "tag" }, "THE PROMPT"),
       el("p", { "data-fit": "28" }, view.prompt),
     ),
+    n > 3 ? null : lookArt("dancerLeft", "beside left sway"),
+    n > 3 ? null : lookArt("dancerRight", "beside right sway"),
     el(
       "div",
       { class: "writers n" + n },
@@ -606,7 +608,7 @@ function generating(view) {
     el(
       "div",
       { class: "bottom" },
-      emcee(pick(QUIPS.generating, view.code + config.aiTheme), { signed: true, id: "rimshot" }),
+      emcee(pick(quips("generating"), view.code + config.aiTheme), { signed: true, id: "rimshot" }),
       el("button", { id: "cancel", class: "ghost dim", onclick: send("lobby") }, "Cancel"),
     ),
   );
@@ -665,7 +667,7 @@ function votesIn(view) {
 }
 
 function vote(view) {
-  var line = pick(view.votesEach > 1 ? QUIPS.voteTwo : QUIPS.vote, "v" + view.round);
+  var line = pick(view.votesEach > 1 ? quips("voteTwo") : quips("vote"), "v" + view.round);
   return el(
     "div",
     { class: "screen vote" },
@@ -729,11 +731,11 @@ function resultCard(entry, i, compact, round) {
               }),
               votes > showVoters.length ? el("li", {}, el("span", { class: "avatar more", style: "--size:" + (compact ? 34 : 44) + "px" }, "+" + (votes - showVoters.length))) : null,
             )
-          : el("span", { class: "crickets" }, art(CRICKET), compact ? null : el("em", {}, "*chirp* … *chirp*")),
+          : el("span", { class: "crickets" }, art(CRICKET), compact ? null : el("em", {}, say("crickets", "*chirp* … *chirp*"))),
         el("span", { class: "votes" }, plural(votes, "vote")),
       ),
     ),
-    entry.won ? el("span", { class: "stamp zing" + (once("zing" + round + entry.team) ? " in" : "") }, "ZING!") : null,
+    entry.won ? el("span", { class: "stamp zing" + (once("zing" + round + entry.team) ? " in" : "") }, say("zing", "ZING!")) : null,
   );
 }
 
@@ -832,7 +834,7 @@ function podium(view) {
           { class: "block" },
           el("span", { class: "place" }, place),
           el("span", { class: "name" }, entry.name),
-          el("span", { class: "billing" }, BILLING[Math.min(place, 3) - 1] + " · " + plural(entry.score, "pt")),
+          el("span", { class: "billing" }, say("billing", BILLING)[Math.min(place, 3) - 1] + " · " + plural(entry.score, "pt")),
         ),
       );
     }),
@@ -857,14 +859,14 @@ function awardCards(view) {
   var cards = [];
   if (a.zinger) {
     cards.push(
-      awardCard("BIGGEST ZINGER", "“" + a.zinger.text + "”", a.zinger.by + crew(a.zinger.team) + " · " + a.zinger.votes + " of " + a.zinger.eligible + " votes", -1.5),
+      awardCard(say("zingerAward", "BIGGEST ZINGER"), "“" + a.zinger.text + "”", a.zinger.by + crew(a.zinger.team) + " · " + a.zinger.votes + " of " + a.zinger.eligible + " votes", -1.5),
     );
   }
   if (a.crickets) {
     var count = a.crickets.count;
     cards.push(
       awardCard(
-        "THE CRICKETS AWARD",
+        say("cricketsAward", "THE CRICKETS AWARD"),
         a.crickets.name,
         (count === 1 ? "One answer" : count === 2 ? "Two answers" : count + " answers") + ", zero votes. Iconic.",
         1.2,
@@ -890,9 +892,10 @@ function end(view) {
     el(
       "div",
       { class: "top" },
-      el("span", { class: "kicker" }, "FINAL BOWS"),
+      el("span", { class: "kicker" }, say("finalKicker", "FINAL BOWS")),
       el("h1", { id: "winner", "data-fit": "30" }, champs.length > 1 ? "It's a draw: " + list(champs) + " share the bill!" : verb(champs, "headlines", "headline") + " tonight!"),
     ),
+    lookArt("cheer"),
     el(
       "div",
       { class: "main" },
@@ -920,7 +923,7 @@ function end(view) {
         el(
           "div",
           { class: "row" },
-          el("button", { id: "again", class: "big pink small", onclick: send("start") }, "Encore!"),
+          el("button", { id: "again", class: "big pink small", onclick: send("start") }, say("encore", "Encore!")),
           el("button", { class: "ghost", onclick: send("lobby") }, "New crews"),
           el("button", { class: "ghost dim", onclick: send("exit") }, "Back to arcade"),
         ),
@@ -949,7 +952,7 @@ game.on("heckle", function (h) {
         "left:" + x.toFixed(0) + "px; top:" + (460 + Math.random() * 70).toFixed(0) + "px;" +
         "background:" + (HECKLE_COLOURS[h.kind] || "#FFD23F") + "; --tilt:" + (Math.random() * 14 - 7).toFixed(1) + "deg",
     },
-    h.kind,
+    heckleLabel(h.kind),
     el("small", {}, " — " + h.name),
   );
   bubble.addEventListener("animationend", function () {
@@ -964,6 +967,14 @@ var SCREENS = { lobby: lobby, generating: generating, team: write, vote: vote, r
 
 function render(view) {
   lastView = view;
+  if (setLook(view.theme)) {
+    // The tent's canopy hangs over the stage, behind every screen.
+    stage.querySelectorAll(".canopy").forEach(function (node) {
+      node.remove();
+    });
+    var canopy = lookArt("canopy");
+    if (canopy) stage.prepend(canopy);
+  }
   if (view.phase !== "lobby") openMenu = null;
   if (view.phase !== "team") {
     fx.querySelectorAll(".heckle").forEach(function (node) {

@@ -6,6 +6,8 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import type { Game, Player } from "@arcade/sdk";
 import {
   CREWS,
+  parsePack,
+  THEMES,
   HECKLES_PER_SECOND,
   TEAM_MS,
   WRITE_MS,
@@ -17,7 +19,8 @@ import {
 } from "../game.ts";
 
 const PACKS: Pack[] = [
-  { id: "test", name: "Test", description: "", prompts: Array.from({ length: 20 }, (_, i) => `Prompt ${i + 1}`) },
+  { id: "test", name: "Test", description: "", theme: null, prompts: Array.from({ length: 20 }, (_, i) => `Prompt ${i + 1}`) },
+  { id: "party", name: "Raju's 60th", description: "", theme: "raju60", prompts: Array.from({ length: 20 }, (_, i) => `Roast ${i + 1}`) },
 ];
 
 interface Seat extends Player {
@@ -102,6 +105,37 @@ test("up to six crews, named, and no more", () => {
   // Dropping to fewer crews sends their members back to the picker.
   p.host("configure", { teams: 4 });
   assert.equal(p.view(0).team, null);
+});
+
+test("a pack's theme dresses the show only while that pack is chosen", () => {
+  const p = party(2, { aiAvailable: true });
+  assert.equal(p.hostView().theme, null);
+  assert.equal(p.view(0).theme, null);
+  assert.deepEqual(p.hostView().packs.map((pack: any) => pack.theme), [null, "raju60"]);
+
+  p.host("configure", { pack: "party", teams: 6 });
+  assert.equal(p.hostView().theme, "raju60");
+  assert.equal(p.view(0).theme, "raju60");
+  assert.deepEqual(p.hostView().teams.map((team: any) => team.name), THEMES.raju60.crews);
+  p.play(0, "join", 1);
+  assert.equal(p.view(0).teamName, "Kulfis");
+
+  // AI prompts and other packs go back to the usual stage and names.
+  p.host("configure", { source: "ai" });
+  assert.equal(p.hostView().theme, null);
+  p.host("configure", { source: "pack" });
+  assert.equal(p.hostView().theme, "raju60");
+  p.host("configure", { pack: "test" });
+  assert.equal(p.hostView().theme, null);
+  assert.deepEqual(p.hostView().teams.map((team: any) => team.name), CREWS);
+  assert.equal(p.view(0).teamName, "Blueberries");
+});
+
+test("a pack file may name a theme, and an unknown one is dropped", () => {
+  assert.equal(parsePack("a", { prompts: ["x"] }).theme, null);
+  assert.equal(parsePack("a", { theme: "raju60", prompts: ["x"] }).theme, "raju60");
+  assert.equal(parsePack("a", { theme: "disco", prompts: ["x"] }).theme, null);
+  assert.equal(parsePack("a", { theme: "constructor", prompts: ["x"] }).theme, null);
 });
 
 test("balance crews moves the fewest people and places stragglers", () => {

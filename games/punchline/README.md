@@ -76,7 +76,8 @@ caps a party, and defaults to 16). With more than four crews or more than 16
 players, the projector lobby swaps the crew cards for scrolling lanes of names,
 with a QR code to join.
 
-The fonts (Bagel Fat One and Nunito, SIL Open Font License) are served from
+The fonts (Bagel Fat One and Nunito, plus Modak and Baloo 2 for the Raju's 60th
+look, all SIL Open Font License) are served from
 `public/fonts`, so the game needs no internet connection.
 
 ## Question packs
@@ -98,10 +99,40 @@ opened; no code changes.
 
 - `prompts` is required: a list of strings of at most 200 characters each.
 - `name` (shown in the lobby) defaults to the file name; `description` is optional.
+- `theme` is optional and names a look for the whole show (see [Themed packs](#themed-packs)).
+  An unknown theme is logged and ignored, and the pack plays on the usual stage.
 - A file that does not parse is skipped, and the reason is logged when the
   game starts. Other packs still load.
 - Prompts are drawn at random and are not repeated until the pack runs out,
   including across "Play again".
+
+## Themed packs
+
+A pack can dress the show. While it is the chosen question set, the projector
+and every phone switch to its look; pick another pack (or ✨ AI) and the usual
+Open Mic Night stage comes back. The look follows the lobby setting live, so
+the host sees it change before starting.
+
+```json
+{ "name": "Raju's 60th", "theme": "raju60", "prompts": ["..."] }
+```
+
+A look has three parts, all under the same key:
+
+- **Crew names** in `THEMES` in [`game.ts`](game.ts), so the server's views and
+  messages use them.
+- **Art and copy** in `LOOKS` at the end of [`public/ui.js`](public/ui.js):
+  mascots, the emcee, decorations, heckle labels, Rimshot's lines and any
+  wording to swap. Anything a look leaves out falls back to the usual show.
+- **Colours and layout tweaks** under `body[data-look="..."]` at the end of
+  [`public/style.css`](public/style.css).
+
+`raju60` ([`questions/raju-60th.json`](questions/raju-60th.json)) is a
+wedding-tent night: Indian sweets for crews (Gulab Jamuns, Kulfis, Ladoos,
+Barfis, Faloodas, Jalebis), Rimshot ji in a turban, dancers in saris, tablas,
+marigold garlands, and "WAH WAH!" in place of "ZING!". Its type is Modak and
+Baloo 2, served from `public/fonts` like the others and fetched only when the
+look is on.
 
 ## AI prompts
 

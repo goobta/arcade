@@ -40,6 +40,44 @@
     U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 
+/* For the Raju's 60th look. A browser only fetches these when that look is on. */
+@font-face {
+  font-family: "Modak";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/modak-latin-400-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Modak";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url(./fonts/modak-latin-ext-400-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Baloo 2";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url(./fonts/baloo-2-latin-wght-normal.woff2) format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Baloo 2";
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: swap;
+  src: url(./fonts/baloo-2-latin-ext-wght-normal.woff2) format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF,
+    U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
 :root {
   --ink: #1a1230;
   --shadow: #120b2a;
@@ -804,4 +842,103 @@ button:focus-visible, textarea:focus-visible, input:focus-visible { outline: 4px
 @media (prefers-reduced-motion: reduce) {
   .bob, .hop, .sway, .bulb, .dots i, .vs, .cricket, .timebar .spark, .ghost.nudge, .track, .roll { animation: none !important; }
   .confetto { display: none; }
+}
+
+/* ---------- looks ----------
+   A question pack with a "theme" sets body[data-look] (see ui.js). A look
+   re-colours the show through the variables above and adds its own decor.
+   Nothing here applies to the usual stage. */
+
+/* Raju's 60th: a wedding-tent night in rani pink, marigold and peacock teal. */
+body[data-look="raju60"] {
+  --ink: #2a0e24;
+  --shadow: #22061c;
+  --cream: #fff3d6;
+  --yellow: #ffb01f;
+  --yellow-soft: #ffd67a;
+  --pink: #d0166a;
+  --pink-ink: #a3154f;
+  --lavender: #f5c6d8;
+  --lilac: #ecd3df;
+  --plum: #5e1247;
+  --plum-ink: #7a1040;
+  --muted-line: #b06a8c;
+  --good: #5fe0d2;
+  --teal: #12b5a6;
+  --display: "Modak", "Bagel Fat One", "Nunito", system-ui, sans-serif;
+  --body: "Baloo 2", "Nunito", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  background: radial-gradient(ellipse 60% 75% at 50% -8%, #b8226a 0%, #5e1247 60%, #3a0b30 100%) fixed, #3a0b30;
+}
+body.play[data-look="raju60"] {
+  background: radial-gradient(ellipse 90% 60% at 50% -5%, #b8226a 0%, #5e1247 62%, #3a0b30 100%) fixed, #3a0b30;
+}
+
+/* Pink is deeper here, so what sits on it is cream; the main button turns teal. */
+[data-look="raju60"] .big.pink { background: var(--teal); }
+[data-look="raju60"] .stamp.zing,
+[data-look="raju60"] .option .stamp.vote,
+[data-look="raju60"] .vs,
+[data-look="raju60"] #status { color: var(--cream); }
+[data-look="raju60"] .ring { background: conic-gradient(var(--yellow) 0turn var(--left), var(--plum) var(--left) 1turn); }
+[data-look="raju60"] .lane { background: #3a0b30; }
+[data-look="raju60"] .option.dim { background: #d9b8c8; }
+[data-look="raju60"] .option.dim .letter { background: #f6e7c8; }
+[data-look="raju60"] .ai-controls input[type="range"] { accent-color: var(--teal); }
+[data-look="raju60"] .spotlight { background: linear-gradient(180deg, rgba(255, 176, 31, 0.34), rgba(255, 176, 31, 0.05)); }
+
+/* "WAH WAH!" is longer than "ZING!", and Modak is wider: keep both on the winner's card. */
+[data-look="raju60"] .result .stamp.zing { font-size: 44px; top: -48px; }
+[data-look="raju60"] .results.n3 .result .stamp.zing { font-size: 32px; right: -16px; top: -44px; }
+[data-look="raju60"] .result.compact .stamp.zing { font-size: 22px; top: -26px; }
+[data-look="raju60"] .results.n3 .result .votes { font-size: 28px; }
+[data-look="raju60"] .result-screen .stamp.zing { font-size: 56px; }
+.play[data-look="raju60"] .huddle .sealed { margin-top: 14px; }
+
+/* The projector: the canopy hangs across the top of the stage, behind the screens. */
+.host .canopy { position: absolute; left: 0; top: 0; z-index: 0; pointer-events: none; }
+.host[data-look="raju60"] #app { z-index: 1; }
+.host[data-look="raju60"] .screen { padding-top: 46px; }
+.host[data-look="raju60"] .ticker { padding-top: 42px; gap: 12px; }
+.host[data-look="raju60"] .ticker .lanes { height: 462px; }
+.host[data-look="raju60"] .reveal { padding-top: 44px; gap: 14px; }
+.host[data-look="raju60"] .lobby { gap: 16px; }
+.host[data-look="raju60"] .lobby .marquee h1 { font-size: 62px; }
+.host[data-look="raju60"] .marquee .bulbs { display: none; }
+.host[data-look="raju60"] .marquee { padding-top: 12px; }
+
+/* Dancers and tablas */
+.troupe { display: flex; align-items: flex-end; gap: 14px; align-self: flex-end; }
+.troupe .dancer { width: 68px; height: 113px; transform-origin: 50% 100%; animation: sway 1.6s ease-in-out infinite; }
+.troupe .dancer:last-child { animation-delay: -0.8s; }
+.troupe .tabla { width: 132px; height: 82px; }
+.final .troupe.cheer { position: absolute; right: 150px; top: 132px; }
+.final .troupe.cheer .dancer { width: 60px; height: 100px; animation-duration: 1s; }
+.final .troupe.cheer .tabla { width: 116px; height: 72px; }
+.dancer.beside { position: absolute; top: 168px; width: 78px; height: 130px; transform-origin: 50% 100%; animation-duration: 1.6s; }
+.dancer.beside.left { left: 46px; }
+.dancer.beside.right { right: 46px; animation-delay: -0.8s; }
+
+/* The phone: a straight row of scallops and marigolds across the top. */
+.play[data-look="raju60"] #app { position: relative; }
+.play[data-look="raju60"] #app::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 40px; pointer-events: none;
+  background:
+    radial-gradient(circle at 50% 50%, #ff7a1a 0 5px, transparent 5.5px) 0 22px / 24px 14px repeat-x,
+    radial-gradient(circle at 50% 50%, #ffc533 0 5px, transparent 5.5px) 12px 22px / 24px 14px repeat-x,
+    radial-gradient(circle at 50% 0, #ffb01f 0 17px, #2a0e24 17px 20px, transparent 20.5px) 0 0 / 80px 22px repeat-x,
+    radial-gradient(circle at 50% 0, #12b5a6 0 17px, #2a0e24 17px 20px, transparent 20.5px) 40px 0 / 80px 22px repeat-x;
+}
+.play[data-look="raju60"] .phone-screen { padding-top: 44px; gap: 14px; }
+
+/* The timer's spark becomes a diya flame. */
+[data-look="raju60"] .timebar .spark {
+  top: -16px; width: 22px; height: 24px; clip-path: none; transform-origin: 50% 100%;
+  background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 44'%3E%3Cpath d='M20 3 Q30 15 20 25 Q10 15 20 3 Z' fill='%23FFD23F' stroke='%232A0E24' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M3 24 Q20 46 37 24 Z' fill='%23C9540A' stroke='%232A0E24' stroke-width='3' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+  animation: flicker 0.5s ease-in-out infinite;
+}
+[data-look="raju60"] .timebar.staged.voting .spark { background-color: transparent; }
+@keyframes flicker { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.15) rotate(4deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .dancer, [data-look="raju60"] .timebar .spark { animation: none !important; }
 }
