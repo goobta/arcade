@@ -131,9 +131,9 @@ function crewName(g: Game<State>, team: number): string {
 const MAX_ROUNDS = 20;
 export const MAX_ANSWER = 100;
 /** The crew stage: this long to write and lock an answer... */
-export const WRITE_MS = 25_000;
+export const WRITE_MS = 85_000;
 /** ...and this long in all, so the last five seconds are for voting only. */
-export const TEAM_MS = 30_000;
+export const TEAM_MS = 90_000;
 export const VOTE_MS = 20_000;
 /** From this many crews up, everyone gets two votes on the final ballot. */
 export const TWO_VOTE_CREWS = 4;
