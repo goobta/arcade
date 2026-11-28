@@ -19,9 +19,9 @@ The host sets these in the lobby:
 
 Every round has two stages, and every crew plays both.
 
-**1. Crew stage, 30 seconds, on the phones.** One clock for the whole room.
+**1. Crew stage, 90 seconds, on the phones.** One clock for the whole room.
 
-- For the first 25 seconds you write your own answer and lock it in. One
+- For the first 85 seconds you write your own answer and lock it in. One
   answer each, and a locked answer cannot be changed.
 - Your teammates' answers appear on your phone the moment they lock them (never
   while they are still typing). Other crews and the projector see none of it:
